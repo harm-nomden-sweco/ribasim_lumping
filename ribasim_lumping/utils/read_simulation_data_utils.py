@@ -1,7 +1,7 @@
 # pylint: disable=missing-function-docstring
 from pydantic import BaseModel
 from pathlib import Path
-from typing import List, Union, Optional, Any
+from typing import List, Union, Optional, Any, Tuple
 import datetime
 import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
@@ -13,7 +13,7 @@ import xarray as xr
 import xugrid as xu
 
 
-def get_simulation_names_from_dir(self, path_dir=None):
+def get_simulation_names_from_dir(path_dir=None) -> List[str]:
     """search directory and find all dhydro-projects (.dsproj)"""
     if not Path(path_dir).exists():
         raise ValueError("Path of simulations does not exist")
@@ -26,7 +26,7 @@ def get_data_from_simulation(
     simulation_name: str,
     simulations_ts: Union[List, pd.DatetimeIndex],
     n_start=0,
-):
+) -> Tuple[xr.Dataset, xu.UgridDataset]:
     """Gets simulation data
     - from a simulation
     - at certain timestamps.
@@ -64,7 +64,7 @@ def get_data_from_simulations_set(
     simulations_dir: Path,
     simulations_names: List[str],
     simulations_ts: Union[List, pd.DatetimeIndex],
-):
+) -> Tuple[xr.Dataset, xu.UgridDataset]:
     """ "Combines simulation data:
     - from several simulations (names)
     - from simulation folder (dir)
@@ -101,18 +101,29 @@ def get_data_from_simulations_set(
     return his_data, map_data
 
 
-def combine_data_from_simulations_sets(nc_data, nc_data_new, xugrid=False, dim='set'):
-    """"Combine his.nc and map.nc data from two cases over dimension DIM assuming 
+def combine_data_from_simulations_sets(
+    nc_data: Union[xr.Dataset, xu.UgridDataset],
+    nc_data_new: Union[xr.Dataset, xu.UgridDataset],
+    xugrid: bool = False,
+    dim: str = "set",
+) -> Union[xr.Dataset, xu.UgridDataset]:
+    """ "Combine his.nc and map.nc data from two cases over dimension DIM assuming
     that all nc-variables not including DIM as dimension are equal"""
     nc_set_vars = [v_n for v_n, v in nc_data_new.data_vars.items() if dim in v.dims]
-    nc_nonset_vars = [v_n for v_n, v in nc_data_new.data_vars.items() if dim not in v.dims]
+    nc_nonset_vars = [
+        v_n for v_n, v in nc_data_new.data_vars.items() if dim not in v.dims
+    ]
     if nc_data is None:
         nc_data = nc_data_new[nc_set_vars]
     else:
         if xugrid:
-            nc_data = xu.concat([nc_data[nc_set_vars], nc_data_new[nc_set_vars]], dim=dim)
+            nc_data = xu.concat(
+                [nc_data[nc_set_vars], nc_data_new[nc_set_vars]], dim=dim
+            )
         else:
-            nc_data = xr.concat([nc_data[nc_set_vars], nc_data_new[nc_set_vars]], dim=dim)
+            nc_data = xr.concat(
+                [nc_data[nc_set_vars], nc_data_new[nc_set_vars]], dim=dim
+            )
     if xugrid:
         nc_data = xu.merge([nc_data_new[nc_nonset_vars], nc_data])
     else:

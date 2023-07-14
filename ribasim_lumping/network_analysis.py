@@ -1,7 +1,7 @@
 # pylint: disable=missing-function-docstring
 from pydantic import BaseModel
 from pathlib import Path
-from typing import List, Union, Optional, Any
+from typing import List, Union, Optional, Any, Tuple
 import datetime
 import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
@@ -48,7 +48,7 @@ class NetworkAnalysis(BaseModel):
         simulations_dir: Path,
         simulations_names: List[str] = None,
         simulations_ts: Union[List, pd.DatetimeIndex] = [-1],
-    ):
+    ) -> Tuple[xr.Dataset, xu.UgridDataset]:
         """ "receives his- and map-data
         - from d-hydro simulations with names: simulation_names
         - within directory: simulations_dir
@@ -67,7 +67,9 @@ class NetworkAnalysis(BaseModel):
             simulations_ts=simulations_ts,
         )
         self.his_data = combine_data_from_simulations_sets(self.his_data, his_data)
-        self.map_data = combine_data_from_simulations_sets(self.map_data, map_data, xugrid=True)
+        self.map_data = combine_data_from_simulations_sets(
+            self.map_data, map_data, xugrid=True
+        )
         return self.his_data, self.map_data
 
     def get_network_data(self):
@@ -93,7 +95,7 @@ class NetworkAnalysis(BaseModel):
         areas: gpd.GeoDataFrame,
         nodes: gpd.GeoDataFrame = None,
         edges: gpd.GeoDataFrame = None,
-    ):
+    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
         if nodes is None:
             nodes = self.dhydro_nodes
         if edges is None:
@@ -108,7 +110,7 @@ class NetworkAnalysis(BaseModel):
         self.basins_gdf = basins
         return self.basins_gdf, self.areas_gdf
 
-    def get_nodes(self):
+    def get_nodes(self) -> gpd.GeoDataFrame:
         """calculate nodes dataframe"""
         self.dhydro_nodes = (
             self.map_data["mesh1d_node_id"]
@@ -118,7 +120,7 @@ class NetworkAnalysis(BaseModel):
         )
         return self.dhydro_nodes
 
-    def get_edges(self):
+    def get_edges(self) -> gpd.GeoDataFrame:
         """calculate edges dataframe"""
         edges = (
             self.map_data["mesh1d_q1"][-1][-1]
@@ -137,7 +139,7 @@ class NetworkAnalysis(BaseModel):
         )
         return self.dhydro_edges
 
-    def get_confluence_points(self):
+    def get_confluence_points(self) -> gpd.GeoDataFrame:
         """calculate confluence points based on finding multiple inflows"""
         c = self.dhydro_edges.end_node_no.value_counts()
         self.confluence_points = self.dhydro_nodes[
@@ -145,7 +147,7 @@ class NetworkAnalysis(BaseModel):
         ]
         return self.confluence_points
 
-    def get_bifurcation_points(self):
+    def get_bifurcation_points(self) -> gpd.GeoDataFrame:
         """calculate split points based on finding multiple outflows"""
         d = self.dhydro_edges.start_node_no.value_counts()
         self.bifurcation_points = self.dhydro_nodes[
@@ -153,7 +155,7 @@ class NetworkAnalysis(BaseModel):
         ]
         return self.bifurcation_points
 
-    def get_weirs(self):
+    def get_weirs(self) -> gpd.GeoDataFrame:
         weirs = gpd.GeoDataFrame(
             data={"weirgen": self.his_data["weirgens"]},
             geometry=gpd.points_from_xy(
@@ -167,7 +169,7 @@ class NetworkAnalysis(BaseModel):
         )
         return self.weirs
 
-    def get_pumps(self):
+    def get_pumps(self) -> gpd.GeoDataFrame:
         pumps = gpd.GeoDataFrame(
             data={"pumps": self.his_data["pumps"]},
             geometry=gpd.points_from_xy(
@@ -181,7 +183,7 @@ class NetworkAnalysis(BaseModel):
         )
         return self.pumps
 
-    def get_laterals(self):
+    def get_laterals(self) -> gpd.GeoDataFrame:
         laterals = gpd.GeoDataFrame(
             data={"lateral": self.his_data["lateral"]},
             geometry=gpd.points_from_xy(
