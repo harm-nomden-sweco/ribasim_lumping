@@ -1,7 +1,7 @@
 # pylint: disable=missing-function-docstring
 from pydantic import BaseModel
 from pathlib import Path
-from typing import List, Union, Optional, Any, Tuple
+from typing import List, Union, Optional, Any, Tuple, Dict
 import datetime
 import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
@@ -19,6 +19,11 @@ from .utils.read_simulation_data_utils import (
     combine_data_from_simulations_sets,
 )
 from .utils.generate_basins_areas import create_basins_based_on_split_node_ids
+
+def create_objects_gdf(data: Dict, xcoor: List[float], 
+                       ycoor: List[float], dhydro_nodes: gpd.GeoDataFrame, crs: int = 28992):
+    gdf = gpd.GeoDataFrame(data=data, geometry=gpd.points_from_xy(xcoor, ycoor), crs=crs)
+    return gdf.sjoin(dhydro_nodes).drop(columns=["index_right"])
 
 
 class NetworkAnalysis(BaseModel):
@@ -156,45 +161,33 @@ class NetworkAnalysis(BaseModel):
         return self.bifurcation_points
 
     def get_weirs(self) -> gpd.GeoDataFrame:
-        weirs = gpd.GeoDataFrame(
+        self.weirs = create_objects_gdf(
             data={"weirgen": self.his_data["weirgens"]},
-            geometry=gpd.points_from_xy(
-                self.his_data["weirgen_geom_node_coordx"].data[::2],
-                self.his_data["weirgen_geom_node_coordy"].data[::2],
-            ),
+            xcoor=self.his_data["weirgen_geom_node_coordx"].data[::2],
+            ycoor=self.his_data["weirgen_geom_node_coordy"].data[::2],
+            dhydro_nodes=self.dhydro_nodes[["mesh1d_nNodes", "geometry"]],
             crs=self.crs,
-        )
-        self.weirs = weirs.sjoin(self.dhydro_nodes[["mesh1d_nNodes", "geometry"]]).drop(
-            columns=["index_right"]
         )
         return self.weirs
 
     def get_pumps(self) -> gpd.GeoDataFrame:
-        pumps = gpd.GeoDataFrame(
+        self.pumps = create_objects_gdf(
             data={"pumps": self.his_data["pumps"]},
-            geometry=gpd.points_from_xy(
-                self.his_data["pump_geom_node_coordx"].data[::2],
-                self.his_data["pump_geom_node_coordy"].data[::2],
-            ),
+            xcoor=self.his_data["pump_geom_node_coordx"].data[::2],
+            ycoor=self.his_data["pump_geom_node_coordy"].data[::2],
+            dhydro_nodes=self.dhydro_nodes[["mesh1d_nNodes", "geometry"]],
             crs=self.crs,
-        )
-        self.pumps = pumps.sjoin(self.dhydro_nodes[["mesh1d_nNodes", "geometry"]]).drop(
-            columns=["index_right"]
         )
         return self.pumps
 
     def get_laterals(self) -> gpd.GeoDataFrame:
-        laterals = gpd.GeoDataFrame(
+        self.laterals = create_objects_gdf(
             data={"lateral": self.his_data["lateral"]},
-            geometry=gpd.points_from_xy(
-                self.his_data["lateral_geom_node_coordx"],
-                self.his_data["lateral_geom_node_coordy"],
-            ),
+            xcoor=self.his_data["lateral_geom_node_coordx"],
+            ycoor=self.his_data["lateral_geom_node_coordy"],
+            dhydro_nodes=self.dhydro_nodes[["mesh1d_nNodes", "geometry"]],
             crs=self.crs,
         )
-        self.laterals = laterals.sjoin(
-            self.dhydro_nodes[["mesh1d_nNodes", "geometry"]]
-        ).drop(columns=["index_right"])
         return self.laterals
 
     def get_qh_relations_weirs(self, weirs_ids: List[str] = None):
