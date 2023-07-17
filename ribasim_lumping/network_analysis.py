@@ -20,28 +20,36 @@ from .utils.read_simulation_data_utils import (
 )
 from .utils.generate_basins_areas import create_basins_based_on_split_node_ids
 
-def create_objects_gdf(data: Dict, xcoor: List[float], 
-                       ycoor: List[float], dhydro_nodes: gpd.GeoDataFrame, crs: int = 28992):
-    gdf = gpd.GeoDataFrame(data=data, geometry=gpd.points_from_xy(xcoor, ycoor), crs=crs)
-    return gdf.sjoin(dhydro_nodes).drop(columns=["index_right"])
+
+def create_objects_gdf(
+    data: Dict,
+    xcoor: List[float],
+    ycoor: List[float],
+    nodes_gdf: gpd.GeoDataFrame,
+    crs: int = 28992,
+):
+    gdf = gpd.GeoDataFrame(
+        data=data, geometry=gpd.points_from_xy(xcoor, ycoor), crs=crs
+    )
+    return gdf.sjoin(nodes_gdf).drop(columns=["index_right"])
 
 
 class NetworkAnalysis(BaseModel):
     """class to select datapoints from different simulations at certain timestamps"""
 
-    his_data: xr.Dataset = None
-    map_data: xr.Dataset = None
-    dhydro_edges: gpd.GeoDataFrame = None
-    dhydro_nodes: gpd.GeoDataFrame = None
+    his_data: xu.UgridDataset = None
+    map_data: xu.UgridDataset = None
+    edges_gdf: gpd.GeoDataFrame = None
+    nodes_gdf: gpd.GeoDataFrame = None
     network_graph: nx.DiGraph = None
     areas_gdf: gpd.GeoDataFrame = None
     basins_gdf: gpd.GeoDataFrame = None
-    confluence_points: gpd.GeoDataFrame = None
-    bifurcation_points: gpd.GeoDataFrame = None
-    weirs: gpd.GeoDataFrame = None
-    pumps: gpd.GeoDataFrame = None
-    laterals: gpd.GeoDataFrame = None
-    culverts: gpd.GeoDataFrame = None
+    confluences_gdf: gpd.GeoDataFrame = None
+    bifurcations_gdf: gpd.GeoDataFrame = None
+    weirs_gdf: gpd.GeoDataFrame = None
+    pumps_gdf: gpd.GeoDataFrame = None
+    laterals_gdf: gpd.GeoDataFrame = None
+    culverts_gdf: gpd.GeoDataFrame = None
     crs: int = 28992
 
     class Config:
@@ -85,14 +93,43 @@ class NetworkAnalysis(BaseModel):
             raise ValueError("D-Hydro simulation his-data is not read")
         self.get_nodes()
         self.get_edges()
-        self.get_confluence_points()
-        self.get_bifurcation_points()
+        self.get_confluences_gdf()
+        self.get_bifurcations_gdf()
         self.get_weirs()
         self.get_pumps()
         self.get_laterals()
         print(
             "network locations read: nodes/edges/confluences/bifurcations/weirs/pumps/laterals"
         )
+
+    def get_nodes(self) -> gpd.GeoDataFrame:
+        """calculate nodes dataframe"""
+        self.nodes_gdf = (
+            self.map_data["mesh1d_node_id"]
+            .ugrid.to_geodataframe()
+            .reset_index()
+            .set_crs(self.crs)
+        )
+        return self.nodes_gdf
+
+    def get_edges(self) -> gpd.GeoDataFrame:
+        """calculate edges dataframe"""
+        edges = (
+            self.map_data["mesh1d_q1"][-1][-1]
+            .ugrid.to_geodataframe()
+            .reset_index()
+            .set_crs(self.crs)
+            .drop(columns=["condition", "mesh1d_q1", "set"])
+        )
+        edges_nodes = self.map_data["mesh1d_edge_nodes"]
+        edges_nodes = np.column_stack(edges_nodes.data)
+        edges_nodes = pd.DataFrame(
+            {"start_node_no": edges_nodes[0] - 1, "end_node_no": edges_nodes[1] - 1}
+        )
+        self.edges_gdf = edges.merge(
+            edges_nodes, how="inner", left_index=True, right_index=True
+        )
+        return self.edges_gdf
 
     def create_basins_based_on_split_node_ids(
         self,
@@ -102,100 +139,73 @@ class NetworkAnalysis(BaseModel):
         edges: gpd.GeoDataFrame = None,
     ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
         if nodes is None:
-            nodes = self.dhydro_nodes
+            nodes = self.nodes_gdf
         if edges is None:
-            edges = self.dhydro_edges
-        basins, areas = create_basins_based_on_split_node_ids(
-            nodes=self.dhydro_nodes,
-            edges=self.dhydro_edges,
+            edges = self.edges_gdf
+        basins, areas, nodes, edges = create_basins_based_on_split_node_ids(
+            nodes=self.nodes_gdf,
+            edges=self.edges_gdf,
             split_node_ids=split_node_ids,
             areas=areas,
         )
+        self.nodes_gdf = nodes
+        self.edges_gdf = edges
         self.areas_gdf = areas
         self.basins_gdf = basins
-        return self.basins_gdf, self.areas_gdf
+        return self.basins_gdf, self.areas_gdf, self.nodes_gdf, self.edges_gdf
 
-    def get_nodes(self) -> gpd.GeoDataFrame:
-        """calculate nodes dataframe"""
-        self.dhydro_nodes = (
-            self.map_data["mesh1d_node_id"]
-            .ugrid.to_geodataframe()
-            .reset_index()
-            .set_crs(self.crs)
-        )
-        return self.dhydro_nodes
-
-    def get_edges(self) -> gpd.GeoDataFrame:
-        """calculate edges dataframe"""
-        edges = (
-            self.map_data["mesh1d_q1"][-1][-1]
-            .ugrid.to_geodataframe()
-            .reset_index()
-            .set_crs(self.crs)
-            .drop(columns=["condition", "mesh1d_q1"])
-        )
-        edges_nodes = self.map_data["mesh1d_edge_nodes"]
-        edges_nodes = np.column_stack(edges_nodes.data)
-        edges_nodes = pd.DataFrame(
-            {"start_node_no": edges_nodes[0] - 1, "end_node_no": edges_nodes[1] - 1}
-        )
-        self.dhydro_edges = edges.merge(
-            edges_nodes, how="inner", left_index=True, right_index=True
-        )
-        return self.dhydro_edges
-
-    def get_confluence_points(self) -> gpd.GeoDataFrame:
+    def get_confluences_gdf(self) -> gpd.GeoDataFrame:
         """calculate confluence points based on finding multiple inflows"""
-        c = self.dhydro_edges.end_node_no.value_counts()
-        self.confluence_points = self.dhydro_nodes[
-            self.dhydro_nodes.index.isin(c.index[c.gt(1)])
+        c = self.edges_gdf.end_node_no.value_counts()
+        self.confluences_gdf = self.nodes_gdf[
+            self.nodes_gdf.index.isin(c.index[c.gt(1)])
         ]
-        return self.confluence_points
+        return self.confluences_gdf
 
-    def get_bifurcation_points(self) -> gpd.GeoDataFrame:
+    def get_bifurcations_gdf(self) -> gpd.GeoDataFrame:
         """calculate split points based on finding multiple outflows"""
-        d = self.dhydro_edges.start_node_no.value_counts()
-        self.bifurcation_points = self.dhydro_nodes[
-            self.dhydro_nodes.index.isin(d.index[d.gt(1)])
+        d = self.edges_gdf.start_node_no.value_counts()
+        self.bifurcations_gdf = self.nodes_gdf[
+            self.nodes_gdf.index.isin(d.index[d.gt(1)])
         ]
-        return self.bifurcation_points
+        return self.bifurcations_gdf
 
     def get_weirs(self) -> gpd.GeoDataFrame:
-        self.weirs = create_objects_gdf(
+        self.weirs_gdf = create_objects_gdf(
             data={"weirgen": self.his_data["weirgens"]},
             xcoor=self.his_data["weirgen_geom_node_coordx"].data[::2],
             ycoor=self.his_data["weirgen_geom_node_coordy"].data[::2],
-            dhydro_nodes=self.dhydro_nodes[["mesh1d_nNodes", "geometry"]],
+            nodes_gdf=self.nodes_gdf[["mesh1d_nNodes", "geometry"]],
             crs=self.crs,
         )
-        return self.weirs
+        return self.weirs_gdf
 
     def get_pumps(self) -> gpd.GeoDataFrame:
-        self.pumps = create_objects_gdf(
+        self.pumps_gdf = create_objects_gdf(
             data={"pumps": self.his_data["pumps"]},
             xcoor=self.his_data["pump_geom_node_coordx"].data[::2],
             ycoor=self.his_data["pump_geom_node_coordy"].data[::2],
-            dhydro_nodes=self.dhydro_nodes[["mesh1d_nNodes", "geometry"]],
+            nodes_gdf=self.nodes_gdf[["mesh1d_nNodes", "geometry"]],
             crs=self.crs,
         )
-        return self.pumps
+        return self.pumps_gdf
 
     def get_laterals(self) -> gpd.GeoDataFrame:
-        self.laterals = create_objects_gdf(
+        self.laterals_gdf = create_objects_gdf(
             data={"lateral": self.his_data["lateral"]},
             xcoor=self.his_data["lateral_geom_node_coordx"],
             ycoor=self.his_data["lateral_geom_node_coordy"],
-            dhydro_nodes=self.dhydro_nodes[["mesh1d_nNodes", "geometry"]],
+            nodes_gdf=self.nodes_gdf[["mesh1d_nNodes", "geometry"]],
             crs=self.crs,
         )
-        return self.laterals
+        return self.laterals_gdf
 
-    def get_qh_relations_weirs(self, weirs_ids: List[str] = None):
-        # TODO: get QH relations from selected locations
-        return weirs_ids
+    # def get_qh_relations_weirs(self, weirs_ids: List[str] = None):
+    #     # TODO: get QH relations from selected locations
+    #     return weirs_ids
 
-    def get_qh_relation_edges_around_node(
-        self, nodes_ids: List[str] = None, nodes_locations: List[Point] = None
-    ):
-        # TODO: get QH relations from selected locations
-        return nodes_ids
+    # def get_qh_relation_edges_around_node(
+    #     self, nodes_ids: List[str] = None, nodes_locations: List[Point] = None
+    # ):
+    #     # TODO: get QH relations from selected locations
+    #     return nodes_ids
