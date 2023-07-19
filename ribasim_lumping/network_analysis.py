@@ -200,6 +200,15 @@ class NetworkAnalysis(BaseModel):
         )
         return self.laterals_gdf
 
+    def get_basins(self):
+        if self.basin_areas_gdf is None:
+            self.basins_gdf = None
+        else:
+            self.basin_areas_gdf['area'] = self.basin_areas_gdf.geometry.area
+            self.basins_gdf = self.basin_areas_gdf.copy()
+            self.basins_gdf['geometry'] = self.basin_areas_gdf.geometry.representative_point()
+        return self.basins_gdf
+
     # def get_qh_relations_weirs(self, weirs_ids: List[str] = None):
     #     # TODO: get QH relations from selected locations
     #     return weirs_ids
