@@ -12,6 +12,7 @@ import dfm_tools as dfmt
 import xarray as xr
 import xugrid as xu
 import networkx as nx
+from shapely.ops import nearest_points
 
 from .utils.read_simulation_data_utils import (
     get_data_from_simulations_set,
@@ -32,6 +33,7 @@ def create_objects_gdf(
         data=data, geometry=gpd.points_from_xy(xcoor, ycoor), crs=crs
     )
     return gdf.sjoin(nodes_gdf).drop(columns=["index_right"])
+
 
 
 class NetworkAnalysis(BaseModel):
@@ -110,6 +112,7 @@ class NetworkAnalysis(BaseModel):
             .reset_index()
             .set_crs(self.crs)
         )
+        self.nodes_gdf["mesh1d_node_id"] = self.nodes_gdf["mesh1d_node_id"].astype(str)
         return self.nodes_gdf
 
     def get_edges(self) -> gpd.GeoDataFrame:
@@ -131,10 +134,25 @@ class NetworkAnalysis(BaseModel):
         )
         return self.edges_gdf
 
+    def create_basins_based_on_split_node_gdf(
+        self,
+        split_node_gdf: List[int],
+        areas: gpd.GeoDataFrame = None,
+        nodes: gpd.GeoDataFrame = None,
+        edges: gpd.GeoDataFrame = None,
+    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+        split_nodes_gdf = self.find_nearest_nodes(split_nodes_gdf=split_node_gdf, nodes=nodes)
+        return self.create_basins_based_on_split_node_ids(
+            split_node_ids=list(split_nodes_gdf['nearest_node_id'].values),
+            areas=areas,
+            nodes=nodes,
+            edges=edges,
+        )
+
     def create_basins_based_on_split_node_ids(
         self,
         split_node_ids: List[int],
-        areas: gpd.GeoDataFrame,
+        areas: gpd.GeoDataFrame = None,
         nodes: gpd.GeoDataFrame = None,
         edges: gpd.GeoDataFrame = None,
     ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
@@ -142,6 +160,8 @@ class NetworkAnalysis(BaseModel):
             nodes = self.nodes_gdf
         if edges is None:
             edges = self.edges_gdf
+        if areas is None:
+            areas = self.areas_gdf
         basin_areas, areas, nodes, edges = create_basins_based_on_split_node_ids(
             nodes=self.nodes_gdf,
             edges=self.edges_gdf,
@@ -199,6 +219,46 @@ class NetworkAnalysis(BaseModel):
             crs=self.crs,
         )
         return self.laterals_gdf
+
+    def export_to_geopackage(
+            self, 
+            basins: gpd.GeoDataFrame = None, 
+            split_nodes: gpd.GeoDataFrame = None, 
+            output = "output/test_export_geopackage/ribasim_network.gpkg",
+        ): 
+        gdfs = dict(
+            nodes=self.nodes_gdf,
+            edges=self.edges_gdf,
+            confluences=self.confluences_gdf,
+            bifurcations=self.bifurcations_gdf,
+            weirs=self.weirs_gdf,
+            pumps=self.pumps_gdf,
+            laterals=self.laterals_gdf,
+            basins=basins,
+            split_nodes=split_nodes
+        )
+        for gdf_name, gdf in gdfs.items():
+            if gdf is not None:
+                gdf.to_file(output, layer=gdf_name, driver="GPKG")
+    
+    def find_nearest_nodes(self, split_nodes_gdf: gpd.GeoDataFrame, nodes: gpd.GeoDataFrame = None) -> gpd.GeoDataFrame:
+        # split_nodes must have columns: 'splitnode_id','geometry'
+        if nodes is None:
+            nodes = self.nodes_gdf
+        if nodes is None:
+            raise ValueError('network has no nodes')
+
+        for index, row in split_nodes_gdf.iterrows():
+            point = row.geometry
+            multipoint = nodes.drop(index, axis=0).geometry.unary_union
+            queried_geom, nearest_geom = nearest_points(point, multipoint)
+            # split_nodes.loc[index, 'nearest_geometry'] = nearest_geom
+            
+            nearest_node = nodes.loc[nodes['geometry'] == nearest_geom]
+            split_nodes_gdf.loc[index, 'nearest_node_id'] = nearest_node['mesh1d_nNodes'].iloc[0]
+        split_nodes_gdf.nearest_node_id = split_nodes_gdf.nearest_node_id.astype(int)
+        split_nodes_gdf = split_nodes_gdf.set_crs(28992)
+        return split_nodes_gdf
 
     # def get_qh_relations_weirs(self, weirs_ids: List[str] = None):
     #     # TODO: get QH relations from selected locations
