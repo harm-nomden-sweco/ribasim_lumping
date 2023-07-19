@@ -35,7 +35,6 @@ def create_objects_gdf(
     return gdf.sjoin(nodes_gdf).drop(columns=["index_right"])
 
 
-
 class NetworkAnalysis(BaseModel):
     """class to select datapoints from different simulations at certain timestamps"""
 
@@ -52,6 +51,7 @@ class NetworkAnalysis(BaseModel):
     pumps_gdf: gpd.GeoDataFrame = None
     laterals_gdf: gpd.GeoDataFrame = None
     culverts_gdf: gpd.GeoDataFrame = None
+    split_node_ids: List[int] = []
     crs: int = 28992
 
     class Config:
@@ -134,16 +134,31 @@ class NetworkAnalysis(BaseModel):
         )
         return self.edges_gdf
 
+    def get_node_ids_from_type(self, bifurcations: bool = False, confluences: bool = False, 
+                               weirs: bool = False, laterals: bool = False):
+        split_node_ids = []
+        if bifurcations:
+            split_node_ids += list(self.bifurcations_gdf.mesh1d_nNodes.values)
+        if confluences:
+            split_node_ids += list(self.confluences_gdf.mesh1d_nNodes.values)
+        if weirs:
+            split_node_ids += list(self.weirs_gdf.mesh1d_nNodes.values)
+        if laterals:
+            split_node_ids += list(self.laterals_gdf.mesh1d_nNodes.values)
+        return split_node_ids
+
     def create_basins_based_on_split_node_gdf(
         self,
-        split_node_gdf: List[int],
+        split_node_gdf: gpd.GeoDataFrame,
         areas: gpd.GeoDataFrame = None,
         nodes: gpd.GeoDataFrame = None,
         edges: gpd.GeoDataFrame = None,
     ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-        split_nodes_gdf = self.find_nearest_nodes(split_nodes_gdf=split_node_gdf, nodes=nodes)
+        split_nodes_gdf = self.find_nearest_nodes(
+            split_nodes_gdf=split_node_gdf, nodes=nodes
+        )
         return self.create_basins_based_on_split_node_ids(
-            split_node_ids=list(split_nodes_gdf['nearest_node_id'].values),
+            split_node_ids=list(split_nodes_gdf["nearest_node_id"].values),
             areas=areas,
             nodes=nodes,
             edges=edges,
@@ -162,6 +177,7 @@ class NetworkAnalysis(BaseModel):
             edges = self.edges_gdf
         if areas is None:
             areas = self.areas_gdf
+        self.split_node_ids = split_node_ids
         basin_areas, areas, nodes, edges = create_basins_based_on_split_node_ids(
             nodes=self.nodes_gdf,
             edges=self.edges_gdf,
@@ -221,11 +237,21 @@ class NetworkAnalysis(BaseModel):
         return self.laterals_gdf
 
     def export_to_geopackage(
-            self, 
-            basins: gpd.GeoDataFrame = None, 
-            split_nodes: gpd.GeoDataFrame = None, 
-            output = "output/test_export_geopackage/ribasim_network.gpkg",
-        ): 
+        self,
+        output: Union[Path, str],
+    ):
+        path_output = Path(output)
+        dir_output = path_output.parent
+        if not dir_output.exists():
+            dir_output.mkdir()
+
+        if self.split_node_ids is not None:
+            split_nodes = self.nodes_gdf.loc[self.split_node_ids]
+            split_nodes["split_node_id"] = split_nodes["mesh1d_nNodes"]
+            split_nodes = split_nodes[["split_node_id", "geometry"]]
+        else:
+            split_nodes = None
+
         gdfs = dict(
             nodes=self.nodes_gdf,
             edges=self.edges_gdf,
@@ -234,28 +260,33 @@ class NetworkAnalysis(BaseModel):
             weirs=self.weirs_gdf,
             pumps=self.pumps_gdf,
             laterals=self.laterals_gdf,
-            basins=basins,
-            split_nodes=split_nodes
+            areas=self.areas_gdf,
+            basin_areas=self.basin_areas_gdf,
+            split_nodes=split_nodes,
         )
         for gdf_name, gdf in gdfs.items():
             if gdf is not None:
                 gdf.to_file(output, layer=gdf_name, driver="GPKG")
-    
-    def find_nearest_nodes(self, split_nodes_gdf: gpd.GeoDataFrame, nodes: gpd.GeoDataFrame = None) -> gpd.GeoDataFrame:
+
+    def find_nearest_nodes(
+        self, split_nodes_gdf: gpd.GeoDataFrame, nodes: gpd.GeoDataFrame = None
+    ) -> gpd.GeoDataFrame:
         # split_nodes must have columns: 'splitnode_id','geometry'
         if nodes is None:
             nodes = self.nodes_gdf
         if nodes is None:
-            raise ValueError('network has no nodes')
+            raise ValueError("network has no nodes")
 
         for index, row in split_nodes_gdf.iterrows():
             point = row.geometry
             multipoint = nodes.drop(index, axis=0).geometry.unary_union
             queried_geom, nearest_geom = nearest_points(point, multipoint)
             # split_nodes.loc[index, 'nearest_geometry'] = nearest_geom
-            
-            nearest_node = nodes.loc[nodes['geometry'] == nearest_geom]
-            split_nodes_gdf.loc[index, 'nearest_node_id'] = nearest_node['mesh1d_nNodes'].iloc[0]
+
+            nearest_node = nodes.loc[nodes["geometry"] == nearest_geom]
+            split_nodes_gdf.loc[index, "nearest_node_id"] = nearest_node[
+                "mesh1d_nNodes"
+            ].iloc[0]
         split_nodes_gdf.nearest_node_id = split_nodes_gdf.nearest_node_id.astype(int)
         split_nodes_gdf = split_nodes_gdf.set_crs(28992)
         return split_nodes_gdf

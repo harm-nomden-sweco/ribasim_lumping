@@ -21,6 +21,8 @@ def split_graph_based_on_node_id(
 ) -> nx.DiGraph:
     """split networkx graph at split_node_ids"""
     for split_node_id in split_node_ids:
+        if split_node_id not in graph:
+            continue
         split_node_pos = graph.nodes[split_node_id]["pos"]
         split_edges = [e for e in list(graph.edges) if split_node_id in e]
         graph.remove_edges_from(split_edges)
@@ -86,6 +88,7 @@ def create_basins_based_on_split_node_ids(
 ) -> Tuple[gpd.GeoDataFrame]:
     """create basins (large polygons) based on nodes, edges, split_node_ids and
     areas (discharge units). call all functions"""
+    areas = areas[['geometry']].set_crs(28992)
     network_graph = create_graph_based_on_nodes_edges(nodes, edges)
     network_graph = split_graph_based_on_node_id(network_graph, split_node_ids)
 
