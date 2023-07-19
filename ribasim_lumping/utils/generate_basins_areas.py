@@ -6,7 +6,8 @@ from typing import List, Dict, Any, Union, Optional, Tuple
 def create_graph_based_on_nodes_edges(
     nodes: gpd.GeoDataFrame, edges: gpd.GeoDataFrame
 ) -> nx.DiGraph:
-    """create networkx graph based on geographic nodes and edges"""
+    """create networkx graph based on geographic nodes and edges. 
+    TODO: maybe a faster implementation possible"""
     graph = nx.DiGraph()
     for i, node in nodes.iterrows():
         graph.add_node(node.mesh1d_nNodes, pos=(node.mesh1d_node_x, node.mesh1d_node_y))
@@ -73,8 +74,8 @@ def add_basin_code_from_edges_to_areas_create_basin(
     areas = areas.sort_values(
         by=["area", "size"], ascending=[True, False]
     ).drop_duplicates(subset=["area"], keep="first")
-    basins = areas.dissolve(by="basin").reset_index()
-    return areas, basins
+    basin_areas = areas.dissolve(by="basin").reset_index()
+    return areas, basin_areas
 
 
 def create_basins_based_on_split_node_ids(
@@ -91,8 +92,8 @@ def create_basins_based_on_split_node_ids(
     nodes, edges = add_basin_code_from_network_to_nodes_and_edges(
         network_graph, nodes, edges, split_node_ids
     )
-    areas, basins = add_basin_code_from_edges_to_areas_create_basin(edges, areas)
-    return basins, areas, nodes, edges
+    areas, basin_areas = add_basin_code_from_edges_to_areas_create_basin(edges, areas)
+    return basin_areas, areas, nodes, edges
 
 
 def create_additional_basins_for_main_channels(

@@ -43,7 +43,7 @@ class NetworkAnalysis(BaseModel):
     nodes_gdf: gpd.GeoDataFrame = None
     network_graph: nx.DiGraph = None
     areas_gdf: gpd.GeoDataFrame = None
-    basins_gdf: gpd.GeoDataFrame = None
+    basin_areas_gdf: gpd.GeoDataFrame = None
     confluences_gdf: gpd.GeoDataFrame = None
     bifurcations_gdf: gpd.GeoDataFrame = None
     weirs_gdf: gpd.GeoDataFrame = None
@@ -142,7 +142,7 @@ class NetworkAnalysis(BaseModel):
             nodes = self.nodes_gdf
         if edges is None:
             edges = self.edges_gdf
-        basins, areas, nodes, edges = create_basins_based_on_split_node_ids(
+        basin_areas, areas, nodes, edges = create_basins_based_on_split_node_ids(
             nodes=self.nodes_gdf,
             edges=self.edges_gdf,
             split_node_ids=split_node_ids,
@@ -151,8 +151,8 @@ class NetworkAnalysis(BaseModel):
         self.nodes_gdf = nodes
         self.edges_gdf = edges
         self.areas_gdf = areas
-        self.basins_gdf = basins
-        return self.basins_gdf, self.areas_gdf, self.nodes_gdf, self.edges_gdf
+        self.basin_areas_gdf = basin_areas
+        return self.basin_areas_gdf, self.areas_gdf, self.nodes_gdf, self.edges_gdf
 
     def get_confluences_gdf(self) -> gpd.GeoDataFrame:
         """calculate confluence points based on finding multiple inflows"""
