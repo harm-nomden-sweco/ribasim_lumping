@@ -1,5 +1,6 @@
 import geopandas as gpd
 import networkx as nx
+import numpy as np
 from typing import List, Dict, Any, Union, Optional, Tuple
 
 
@@ -9,10 +10,12 @@ def create_graph_based_on_nodes_edges(
     """create networkx graph based on geographic nodes and edges. 
     TODO: maybe a faster implementation possible"""
     graph = nx.DiGraph()
-    for i, node in nodes.iterrows():
-        graph.add_node(node.mesh1d_nNodes, pos=(node.mesh1d_node_x, node.mesh1d_node_y))
-    for i, edge in edges.iterrows():
-        graph.add_edge(edge.start_node_no, edge.end_node_no)
+    if nodes is not None:
+        for i, node in nodes.iterrows():
+            graph.add_node(node.mesh1d_nNodes, pos=(node.mesh1d_node_x, node.mesh1d_node_y))
+    if edges is not None:
+        for i, edge in edges.iterrows():
+            graph.add_edge(edge.start_node_no, edge.end_node_no)
     return graph
 
 
@@ -44,6 +47,8 @@ def add_basin_code_from_network_to_nodes_and_edges(
 ) -> Tuple[gpd.GeoDataFrame]:
     """add basin (subgraph) code to nodes and edges"""
     subgraphs = list(nx.weakly_connected_components(graph))
+    if nodes is None or edges is None:
+        return None, None
     nodes["basin"] = 0
     edges["basin"] = 0
     for i, subgraph in enumerate(subgraphs):
@@ -61,6 +66,11 @@ def add_basin_code_from_edges_to_areas_create_basin(
 ) -> Tuple[gpd.GeoDataFrame]:
     """find areas with spatial join on edges. add subgraph code to areas
     and combine all areas with certain subgraph code into one basin"""
+    if edges is None:
+        if areas is None:
+            return None, None
+        areas['basin'] = np.nan
+        return areas, None
     edges_sel = edges[~edges["basin"].isna()]
     areas = areas.sjoin(edges_sel[["basin", "geometry"]]).drop(columns=["index_right"])
     areas = areas.reset_index().rename(columns={"index": "area"})
@@ -88,7 +98,8 @@ def create_basins_based_on_split_node_ids(
 ) -> Tuple[gpd.GeoDataFrame]:
     """create basins (large polygons) based on nodes, edges, split_node_ids and
     areas (discharge units). call all functions"""
-    areas = areas[['geometry']].set_crs(28992)
+    if areas is not None:
+        areas = areas[['geometry']].set_crs(28992)
     network_graph = create_graph_based_on_nodes_edges(nodes, edges)
     network_graph = split_graph_based_on_node_id(network_graph, split_node_ids)
 

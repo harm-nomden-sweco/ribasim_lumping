@@ -1,1 +1,1 @@
-from .network_analysis import NetworkAnalysis
+from .ribasim_lumping import RibasimLumpingNetwork

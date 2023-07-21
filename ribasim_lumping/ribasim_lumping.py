@@ -1,13 +1,15 @@
 # pylint: disable=missing-function-docstring
-from pydantic import BaseModel
+import os
 from pathlib import Path
 from typing import List, Union, Optional, Any, Tuple, Dict
+import shutil
 import datetime
+from pydantic import BaseModel
 import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
+from shapely.ops import polylabel
 import pandas as pd
 import numpy as np
-import os
 import dfm_tools as dfmt
 import xarray as xr
 import xugrid as xu
@@ -35,9 +37,10 @@ def create_objects_gdf(
     return gdf.sjoin(nodes_gdf).drop(columns=["index_right"])
 
 
-class NetworkAnalysis(BaseModel):
+class RibasimLumpingNetwork(BaseModel):
     """class to select datapoints from different simulations at certain timestamps"""
 
+    name: str
     his_data: xu.UgridDataset = None
     map_data: xu.UgridDataset = None
     edges_gdf: gpd.GeoDataFrame = None
@@ -45,6 +48,7 @@ class NetworkAnalysis(BaseModel):
     network_graph: nx.DiGraph = None
     areas_gdf: gpd.GeoDataFrame = None
     basin_areas_gdf: gpd.GeoDataFrame = None
+    basins_gdf: gpd.GeoDataFrame = None
     confluences_gdf: gpd.GeoDataFrame = None
     bifurcations_gdf: gpd.GeoDataFrame = None
     weirs_gdf: gpd.GeoDataFrame = None
@@ -134,16 +138,21 @@ class NetworkAnalysis(BaseModel):
         )
         return self.edges_gdf
 
-    def get_node_ids_from_type(self, bifurcations: bool = False, confluences: bool = False, 
-                               weirs: bool = False, laterals: bool = False):
+    def get_node_ids_from_type(
+        self,
+        bifurcations: bool = False,
+        confluences: bool = False,
+        weirs: bool = False,
+        laterals: bool = False,
+    ):
         split_node_ids = []
-        if bifurcations:
+        if bifurcations and self.bifurcations_gdf is not None:
             split_node_ids += list(self.bifurcations_gdf.mesh1d_nNodes.values)
-        if confluences:
+        if confluences and self.confluences_gdf is not None:
             split_node_ids += list(self.confluences_gdf.mesh1d_nNodes.values)
-        if weirs:
+        if weirs and self.weirs_gdf is not None:
             split_node_ids += list(self.weirs_gdf.mesh1d_nNodes.values)
-        if laterals:
+        if laterals and self.laterals_gdf is not None:
             split_node_ids += list(self.laterals_gdf.mesh1d_nNodes.values)
         return split_node_ids
 
@@ -157,8 +166,12 @@ class NetworkAnalysis(BaseModel):
         split_nodes_gdf = self.find_nearest_nodes(
             split_nodes_gdf=split_node_gdf, nodes=nodes
         )
+        if split_nodes_gdf is not None:
+            split_node_ids = list(split_nodes_gdf["nearest_node_id"].values)
+        else:
+            split_node_ids = []
         return self.create_basins_based_on_split_node_ids(
-            split_node_ids=list(split_nodes_gdf["nearest_node_id"].values),
+            split_node_ids=split_node_ids,
             areas=areas,
             nodes=nodes,
             edges=edges,
@@ -188,6 +201,9 @@ class NetworkAnalysis(BaseModel):
         self.edges_gdf = edges
         self.areas_gdf = areas
         self.basin_areas_gdf = basin_areas
+
+        self.get_basins()
+
         return self.basin_areas_gdf, self.areas_gdf, self.nodes_gdf, self.edges_gdf
 
     def get_confluences_gdf(self) -> gpd.GeoDataFrame:
@@ -236,16 +252,33 @@ class NetworkAnalysis(BaseModel):
         )
         return self.laterals_gdf
 
+    def get_basins(self):
+        if self.basin_areas_gdf is None:
+            self.basins_gdf = None
+        else:
+            self.basin_areas_gdf["area"] = self.basin_areas_gdf.geometry.area
+            self.basins_gdf = self.basin_areas_gdf.copy()
+            self.basins_gdf["geometry"] = [
+                polylabel(polygon) for polygon in self.basins_gdf.geometry.values
+            ]
+            self.basins_gdf = self.basins_gdf.set_crs(self.crs)
+        return self.basins_gdf
+
     def export_to_geopackage(
         self,
-        output: Union[Path, str],
+        output_dir: Union[Path, str],
     ):
-        path_output = Path(output)
-        dir_output = path_output.parent
+        dir_output = Path(output_dir, self.name)
         if not dir_output.exists():
             dir_output.mkdir()
+        
+        gpkg_path = Path(dir_output, "ribasim_network.gpkg")
+        qgz_path = Path(dir_output, "ribasim_network.qgz")
 
-        if self.split_node_ids is not None:
+        qgz_path_stored_dir = os.path.abspath(os.path.dirname(__file__))
+        qgz_path_stored = Path(qgz_path_stored_dir, "assets\\ribasim_network.qgz")
+        
+        if self.split_node_ids is not None and self.nodes_gdf is not None:
             split_nodes = self.nodes_gdf.loc[self.split_node_ids]
             split_nodes["split_node_id"] = split_nodes["mesh1d_nNodes"]
             split_nodes = split_nodes[["split_node_id", "geometry"]]
@@ -263,10 +296,19 @@ class NetworkAnalysis(BaseModel):
             areas=self.areas_gdf,
             basin_areas=self.basin_areas_gdf,
             split_nodes=split_nodes,
+            basins=self.basins_gdf,
         )
         for gdf_name, gdf in gdfs.items():
-            if gdf is not None:
-                gdf.to_file(output, layer=gdf_name, driver="GPKG")
+            if gdf is None:
+                gpd.GeoDataFrame(
+                    columns=['geometry'],
+                    geometry='geometry', 
+                    crs=self.crs
+                ).to_file(gpkg_path, layer=gdf_name, driver="GPKG")
+            else:
+                gdf.to_file(gpkg_path, layer=gdf_name, driver="GPKG")
+        if not qgz_path.exists():
+            shutil.copy(qgz_path_stored, qgz_path)
 
     def find_nearest_nodes(
         self, split_nodes_gdf: gpd.GeoDataFrame, nodes: gpd.GeoDataFrame = None
@@ -275,7 +317,7 @@ class NetworkAnalysis(BaseModel):
         if nodes is None:
             nodes = self.nodes_gdf
         if nodes is None:
-            raise ValueError("network has no nodes")
+            return None
 
         for index, row in split_nodes_gdf.iterrows():
             point = row.geometry
