@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Union, Optional, Any, Tuple, Dict
 import shutil
 import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
 from shapely.ops import polylabel
@@ -56,6 +56,7 @@ class RibasimLumpingNetwork(BaseModel):
     laterals_gdf: gpd.GeoDataFrame = None
     culverts_gdf: gpd.GeoDataFrame = None
     split_node_ids: List[int] = []
+    split_nodes: gpd.GeoDataFrame = None
     crs: int = 28992
 
     class Config:
@@ -155,6 +156,38 @@ class RibasimLumpingNetwork(BaseModel):
         if laterals and self.laterals_gdf is not None:
             split_node_ids += list(self.laterals_gdf.mesh1d_nNodes.values)
         return split_node_ids
+
+    def add_split_nodes_based_on_node_ids(
+        self, 
+        split_node_ids: List[int], 
+        level: int = 0
+    ) -> gpd.GeoDataFrame:
+        if level < 1 or level > 10:
+            raise ValueError('add split_node_ids at a level between 1 and 10')
+        split_nodes = self.nodes_gdf[
+            self.nodes_gdf.mesh1d_nNodes.isin(split_node_ids)
+        ].reset_index(drop=True)
+        split_nodes[f'level_{level}'] = 1
+
+        if self.split_nodes is None:
+            self.split_nodes = split_nodes
+        else:
+            if f'level_{level}' in self.split_nodes.columns:
+                self.split_nodes = self.split_nodes.drop(columns=f'level_{level}')
+            split_nodes = pd.concat([self.split_nodes, split_nodes])
+            col_groupby = 'mesh1d_nNodes'
+            cols_merge = ['mesh1d_nNodes', 'mesh1d_node_id', 'mesh1d_node_x', 'mesh1d_node_y', 'geometry']
+            cols_sum = [c for c in split_nodes.columns if c not in cols_merge]
+            split_nodes = (
+                split_nodes.groupby(col_groupby)
+                .agg({c: 'sum' for c in cols_sum})
+                .reset_index()
+                .merge(split_nodes[cols_merge], how='outer', left_on=col_groupby, right_on=col_groupby)
+                .drop_duplicates()
+                .astype({c: 'int32' for c in cols_sum})
+            )
+            self.split_nodes = split_nodes[cols_merge + cols_sum]
+        return self.split_nodes
 
     def create_basins_based_on_split_node_gdf(
         self,
