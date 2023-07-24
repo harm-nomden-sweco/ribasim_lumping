@@ -1,13 +1,10 @@
 # pylint: disable=missing-function-docstring
-from pydantic import BaseModel
+import os
 from pathlib import Path
-from typing import List, Union, Optional, Any, Tuple
+from typing import List, Union, Tuple
 import datetime
-import geopandas as gpd
-from shapely.geometry import Point, Polygon, LineString
 import pandas as pd
 import numpy as np
-import os
 import dfm_tools as dfmt
 import xarray as xr
 import xugrid as xu
