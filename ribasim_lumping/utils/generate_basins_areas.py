@@ -107,8 +107,9 @@ def create_basins_based_on_basin_areas_or_nodes(basin_areas, nodes):
             geometry=gpd.points_from_xy(basins.mesh1d_node_x, basins.mesh1d_node_y),
             crs=nodes.crs
         )
-
-        basins_pnt_gdf = basin_areas.copy()
+        # find representative point (polylabel) for alle basins with assigned 
+        # area (no multipolygons)
+        basins_pnt_gdf = basin_areas[basin_areas.geometry.type=='Polygon']
         basins_pnt_gdf.geometry = [polylabel(g) for g in basins_pnt_gdf.geometry]
         basins_pnt_gdf = basins_pnt_gdf.set_crs(nodes.crs)
         basins = gpd.GeoDataFrame(

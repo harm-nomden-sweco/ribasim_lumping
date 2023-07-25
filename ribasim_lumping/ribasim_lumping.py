@@ -49,6 +49,7 @@ class RibasimLumpingNetwork(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
+
     def add_data_from_simulations_set(
         self,
         set_name: str,
@@ -56,7 +57,7 @@ class RibasimLumpingNetwork(BaseModel):
         simulations_names: List[str] = None,
         simulations_ts: Union[List, pd.DatetimeIndex] = [-1],
     ) -> Tuple[xr.Dataset, xu.UgridDataset]:
-        """ "receives his- and map-data
+        """receives his- and map-data
         - from d-hydro simulations with names: simulation_names
         - within directory: simulations_dir
         - at timestamps: simulations_ts"""
@@ -79,6 +80,7 @@ class RibasimLumpingNetwork(BaseModel):
         )
         return self.his_data, self.map_data
 
+
     def get_network_data(self):
         """Extracts nodes, edges, confluences, bifurcations, weirs, pumps, laterals from his/map"""
         results = get_dhydro_network_objects(self.map_data, self.his_data, self.crs)
@@ -90,13 +92,16 @@ class RibasimLumpingNetwork(BaseModel):
         self.confluences_gdf = results[5]
         self.bifurcations_gdf = results[6]
 
+
     def get_node_ids_from_type(
         self,
         bifurcations: bool = False,
         confluences: bool = False,
         weirs: bool = False,
+        pumps: bool = False,
         laterals: bool = False,
     ):
+        """receive node_ids from bifurcations, confluences, weirs, pumps and/or laterals"""
         split_node_ids = []
         if bifurcations and self.bifurcations_gdf is not None:
             split_node_ids += list(self.bifurcations_gdf.mesh1d_nNodes.values)
@@ -104,14 +109,18 @@ class RibasimLumpingNetwork(BaseModel):
             split_node_ids += list(self.confluences_gdf.mesh1d_nNodes.values)
         if weirs and self.weirs_gdf is not None:
             split_node_ids += list(self.weirs_gdf.mesh1d_nNodes.values)
+        if pumps and self.pumps_gdf is not None:
+            split_node_ids += list(self.pumps_gdf.mesh1d_nNodes.values)
         if laterals and self.laterals_gdf is not None:
             split_node_ids += list(self.laterals_gdf.mesh1d_nNodes.values)
         return split_node_ids
+
 
     def add_split_nodes_based_on_node_ids(
         self,
         split_node_ids: List[int],
     ) -> gpd.GeoDataFrame:
+        """add split_node_ids using a list of node_ids"""
         split_nodes = self.nodes_gdf[
             self.nodes_gdf.mesh1d_nNodes.isin(split_node_ids)
         ].reset_index(drop=True)
@@ -122,9 +131,11 @@ class RibasimLumpingNetwork(BaseModel):
         self.split_nodes = split_nodes
         return self.split_nodes
 
+
     def add_split_nodes_based_on_locations(
         self, split_nodes: gpd.GeoDataFrame
     ) -> gpd.GeoDataFrame:
+        """add split_node_ids using geodataframe (shapefile/geojson)"""
         nearest_node_ids = find_nearest_nodes(
             search_locations=split_nodes,
             nodes=self.nodes_gdf,
@@ -133,11 +144,13 @@ class RibasimLumpingNetwork(BaseModel):
         self.split_nodes = self.add_split_nodes_based_on_node_ids(nearest_node_ids)
         return self.split_nodes
 
-    # @property
-    # def split_node_ids(self):
-    #     if self.split_nodes is None:
-    #         return None
-    #     return list(self.split_nodes.mesh1d_nNodes.values)
+
+    @property
+    def split_node_ids(self):
+        if self.split_nodes is None:
+            return None
+        return list(self.split_nodes.mesh1d_nNodes.values)
+
 
     def create_basins_based_on_split_nodes(
         self,
@@ -161,27 +174,15 @@ class RibasimLumpingNetwork(BaseModel):
         if areas is not None:
             self.areas_gdf = areas
         self.areas_gdf = self.areas_gdf[["geometry"]].explode(index_parts=False)
-        basin_areas, basins, areas, nodes, edges, split_nodes = create_basins_using_split_nodes(
-            nodes=self.nodes_gdf,
-            edges=self.edges_gdf,
-            split_nodes=self.split_nodes,
-            areas=self.areas_gdf,
-        )
-        self.split_nodes = split_nodes
-        self.nodes_gdf = nodes
-        self.edges_gdf = edges
-        self.areas_gdf = areas
-        self.basin_areas_gdf = basin_areas
-        self.basins_gdf = basins
-
-        return (
-            self.basin_areas_gdf,
-            self.basins_gdf,
-            self.areas_gdf,
-            self.nodes_gdf,
-            self.edges_gdf,
-            self.split_nodes,
-        )
+        results_basins = create_basins_using_split_nodes(
+                nodes=self.nodes_gdf,
+                edges=self.edges_gdf,
+                split_nodes=self.split_nodes,
+                areas=self.areas_gdf,
+            )
+        self.basin_areas_gdf, self.basins_gdf, self.areas_gdf, self.nodes_gdf, \
+            self.edges_gdf, self.split_nodes = results_basins
+        return results_basins
 
 
     def export_to_geopackage(
@@ -194,7 +195,6 @@ class RibasimLumpingNetwork(BaseModel):
 
         gpkg_path = Path(dir_output, "ribasim_network.gpkg")
         qgz_path = Path(dir_output, "ribasim_network.qgz")
-
         qgz_path_stored_dir = os.path.abspath(os.path.dirname(__file__))
         qgz_path_stored = Path(qgz_path_stored_dir, "assets\\ribasim_network.qgz")
 
@@ -221,9 +221,11 @@ class RibasimLumpingNetwork(BaseModel):
         if not qgz_path.exists():
             shutil.copy(qgz_path_stored, qgz_path)
 
+
     # def get_qh_relations_weirs(self, weirs_ids: List[str] = None):
     #     # TODO: get QH relations from selected locations
     #     return weirs_ids
+
 
     # def get_qh_relation_edges_around_node(
     #     self, nodes_ids: List[str] = None, nodes_locations: List[Point] = None
