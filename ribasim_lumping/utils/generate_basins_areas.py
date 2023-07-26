@@ -15,7 +15,7 @@ def create_graph_based_on_nodes_edges(
     graph = nx.DiGraph()
     if nodes is not None:
         for i, node in nodes.iterrows():
-            graph.add_node(node.mesh1d_nNodes, pos=(node.mesh1d_node_x, node.mesh1d_node_y))
+            graph.add_node(node.mesh1d_nNodes, pos=(node.geometry.x, node.geometry.y))
     if edges is not None:
         for i, edge in edges.iterrows():
             graph.add_edge(edge.start_node_no, edge.end_node_no)
@@ -97,11 +97,14 @@ def create_basins_based_on_basin_areas_or_nodes(basin_areas, nodes):
     if basin_areas is None:
         basins = None
     else:
+        nodes['mesh1d_node_x'] = nodes.geometry.x
+        nodes['mesh1d_node_y'] = nodes.geometry.y
         basins = nodes[nodes.basin!=-1].groupby(by='basin').agg({
             'mesh1d_nNodes': 'size', 
             'mesh1d_node_x': 'mean', 
             'mesh1d_node_y': 'mean'
         }).reset_index().rename(columns={'mesh1d_nNodes': 'no_nodes'})
+        nodes = nodes.drop(columns=['mesh1d_node_x', 'mesh1d_node_y'])
         basins = gpd.GeoDataFrame(
             data=basins[['basin', 'no_nodes']],
             geometry=gpd.points_from_xy(basins.mesh1d_node_x, basins.mesh1d_node_y),
@@ -116,7 +119,7 @@ def create_basins_based_on_basin_areas_or_nodes(basin_areas, nodes):
             pd.concat([basins_pnt_gdf, basins[~basins.basin.isin(basins_pnt_gdf.basin)]]),
             crs=nodes.crs
         )
-    return basins
+    return basins, nodes
 
 
 def check_if_split_node_is_used(split_nodes, nodes, edges):
@@ -130,6 +133,9 @@ def check_if_split_node_is_used(split_nodes, nodes, edges):
             split_nodes_not_used.append(split_node_id)
     split_nodes['status'] = True
     split_nodes.loc[split_nodes[split_nodes.mesh1d_nNodes.isin(split_nodes_not_used)].index, 'status'] = False
+    split_nodes['object_type'] = split_nodes['object_type'].fillna('manual')
+    split_nodes['split_type'] = split_nodes['object_type']
+    split_nodes.loc[~split_nodes.status, 'split_type'] = 'no_split'
     return split_nodes
 
 
@@ -148,14 +154,12 @@ def create_basins_using_split_nodes(
             areas = areas[['geometry']].to_crs(28992)
     network_graph = create_graph_based_on_nodes_edges(nodes, edges)
     network_graph = split_graph_based_on_node_id(network_graph, split_nodes)
-
     nodes, edges = add_basin_code_from_network_to_nodes_and_edges(
         network_graph, nodes, edges, split_nodes
     )
     split_nodes = check_if_split_node_is_used(split_nodes, nodes, edges)
     areas, basin_areas = add_basin_code_from_edges_to_areas_and_create_basin(edges, areas)
-    basins = create_basins_based_on_basin_areas_or_nodes(basin_areas, nodes)
-
+    basins, nodes = create_basins_based_on_basin_areas_or_nodes(basin_areas, nodes)
     return basin_areas, basins, areas, nodes, edges, split_nodes
 
 

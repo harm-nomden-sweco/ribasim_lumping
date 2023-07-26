@@ -23,18 +23,20 @@ def get_dhydro_network_objects(map_data, his_data, crs):
         raise ValueError("D-Hydro simulation map-data is not read")
     if his_data is None:
         raise ValueError("D-Hydro simulation his-data is not read")
-    nodes_gdf = get_nodes_dhydro_network(map_data, crs)
-    edges_gdf = get_edges_dhydro_network(map_data, crs)
-    weirs_gdf = get_weirs_dhydro_network(his_data, nodes_gdf, crs)
-    pumps_gdf = get_pumps_dhydro_network(his_data, nodes_gdf, crs)
-    laterals_gdf = get_laterals_dhydro_network(his_data, nodes_gdf, crs)
-    confluences_gdf = get_confluences_dhydro_network(nodes_gdf, edges_gdf)
-    bifurcations_gdf = get_bifurcations_dhydro_network(nodes_gdf, edges_gdf)
-    print(
-        "dhydro-network analysed: nodes/edges/confluences/bifurcations/weirs/pumps/laterals"
-    )
-    return nodes_gdf, edges_gdf, weirs_gdf, pumps_gdf, laterals_gdf, \
-        confluences_gdf, bifurcations_gdf
+    print("D-HYDRO-network analysed:")
+    nodes, nodes_h = get_nodes_dhydro_network(map_data, crs)
+    print(" - nodes and waterlevels")
+    edges, edges_q = get_edges_dhydro_network(map_data, crs)
+    print(" - edges and discharges")
+    weirs = get_weirs_dhydro_network(his_data, nodes, crs)
+    print(" - weirs")
+    pumps = get_pumps_dhydro_network(his_data, nodes, crs)
+    print(" - pumps")
+    confluences = get_confluences_dhydro_network(nodes, edges)
+    print(" - confluences")
+    bifurcations = get_bifurcations_dhydro_network(nodes, edges)
+    print(" - bifurcations")
+    return nodes, nodes_h, edges, edges_q, weirs, pumps, confluences, bifurcations
 
 
 def get_nodes_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
@@ -44,9 +46,11 @@ def get_nodes_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
         .ugrid.to_geodataframe()
         .reset_index()
         .set_crs(crs)
-    )
+    ).drop(columns=['mesh1d_node_x', 'mesh1d_node_y'])
     nodes_gdf["mesh1d_node_id"] = nodes_gdf["mesh1d_node_id"].astype(str)
-    return nodes_gdf
+    nodes_h_df = map_data.mesh1d_s1.to_dataframe()[['mesh1d_s1']]
+    nodes_h_df = nodes_h_df.reorder_levels(['mesh1d_nNodes', 'set', 'condition'])
+    return nodes_gdf, nodes_h_df
 
 
 def get_edges_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
@@ -66,7 +70,9 @@ def get_edges_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
     edges_gdf = edges.merge(
         edges_nodes, how="inner", left_index=True, right_index=True
     )
-    return edges_gdf
+    edges_q_df = map_data.mesh1d_q1.to_dataframe()[['mesh1d_q1']]
+    edges_q_df = edges_q_df.reorder_levels(['mesh1d_nEdges', 'set', 'condition'])
+    return edges_gdf, edges_q_df
 
 
 def get_confluences_dhydro_network(nodes_gdf, edges_gdf) -> gpd.GeoDataFrame:
@@ -74,7 +80,8 @@ def get_confluences_dhydro_network(nodes_gdf, edges_gdf) -> gpd.GeoDataFrame:
     c = edges_gdf.end_node_no.value_counts()
     confluences_gdf = nodes_gdf[
         nodes_gdf.index.isin(c.index[c.gt(1)])
-    ]
+    ].reset_index(drop=True)
+    confluences_gdf['object_type'] = 'confluence'
     return confluences_gdf
 
 
@@ -83,41 +90,33 @@ def get_bifurcations_dhydro_network(nodes_gdf, edges_gdf) -> gpd.GeoDataFrame:
     d = edges_gdf.start_node_no.value_counts()
     bifurcations_gdf = nodes_gdf[
         nodes_gdf.index.isin(d.index[d.gt(1)])
-    ]
+    ].reset_index(drop=True)
+    bifurcations_gdf['object_type'] = 'bifurcation'
     return bifurcations_gdf
 
 
 def get_weirs_dhydro_network(his_data, nodes_gdf, crs) -> gpd.GeoDataFrame:
     """Get weirs from dhydro_model"""
     weirs_gdf = create_objects_gdf(
-        data={"weirgen": his_data["weirgens"]},
-        xcoor=his_data["weirgen_geom_node_coordx"].data[::2],
-        ycoor=his_data["weirgen_geom_node_coordy"].data[::2],
+        data={"mesh1d_node_id": his_data["weirgens"]},
+        xcoor=his_data.weirgen_geom_node_coordx.data[::2],
+        ycoor=his_data.weirgen_geom_node_coordy.data[::2],
         nodes_gdf=nodes_gdf[["mesh1d_nNodes", "geometry"]],
         crs=crs,
     )
+    weirs_gdf['object_type'] = 'weir'
     return weirs_gdf
 
 
 def get_pumps_dhydro_network(his_data, nodes_gdf, crs) -> gpd.GeoDataFrame:
     """Get pumps from dhydro_model"""
     pumps_gdf = create_objects_gdf(
-        data={"pumps": his_data["pumps"]},
-        xcoor=his_data["pump_geom_node_coordx"].data[::2],
-        ycoor=his_data["pump_geom_node_coordy"].data[::2],
+        data={"mesh1d_node_id": his_data.pumps},
+        xcoor=his_data.pump_geom_node_coordx.data[::2],
+        ycoor=his_data.pump_geom_node_coordy.data[::2],
         nodes_gdf=nodes_gdf[["mesh1d_nNodes", "geometry"]],
         crs=crs,
     )
+    pumps_gdf['object_type'] = 'pump'
     return pumps_gdf
 
-
-def get_laterals_dhydro_network(his_data, nodes_gdf, crs) -> gpd.GeoDataFrame:
-    """Get laterals from dhydro_model"""
-    laterals_gdf = create_objects_gdf(
-        data={"lateral": his_data["lateral"]},
-        xcoor=his_data["lateral_geom_node_coordx"],
-        ycoor=his_data["lateral_geom_node_coordy"],
-        nodes_gdf=nodes_gdf[["mesh1d_nNodes", "geometry"]],
-        crs=crs,
-    )
-    return laterals_gdf
