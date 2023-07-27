@@ -45,7 +45,7 @@ def get_nodes_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
         .reset_index()
         .set_crs(crs)
     )
-    nodes_gdf["mesh1d_node_id"] = nodes_gdf["mesh1d_node_id"].astype(str)
+    nodes_gdf["mesh1d_node_id"] = nodes_gdf["mesh1d_node_id"].astype(str).apply(lambda r: r[2:-1].strip())
     return nodes_gdf
 
 
