@@ -45,6 +45,8 @@ class RibasimLumpingNetwork(BaseModel):
     pumps_gdf: gpd.GeoDataFrame = None
     culverts_gdf: gpd.GeoDataFrame = None
     split_nodes: gpd.GeoDataFrame = None
+    ribasim_edges_gdf: gpd.GeoDataFrame = None
+    basin_connections_gdf: gpd.GeoDataFrame = None
     crs: int = 28992
 
     class Config:
@@ -234,6 +236,8 @@ class RibasimLumpingNetwork(BaseModel):
             basin_areas=self.basin_areas_gdf,
             split_nodes=self.split_nodes,
             basins=self.basins_gdf,
+            basin_connections=self.basin_connections_gdf,
+            ribasim_edges=self.ribasim_edges_gdf
         )
         print('Exporting:')
         for gdf_name, gdf in gdfs.items():
