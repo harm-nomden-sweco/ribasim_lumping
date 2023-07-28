@@ -144,14 +144,15 @@ def create_basins_using_split_nodes(
     edges: gpd.GeoDataFrame,
     split_nodes: gpd.GeoDataFrame,
     areas: gpd.GeoDataFrame,
+    crs: int = 28992
 ) -> Tuple[gpd.GeoDataFrame]:
     """create basins (large polygons) based on nodes, edges, split_nodes and
     areas (discharge units). call all functions"""
     if areas is not None:
         if areas.crs is None:
-            areas = areas[['geometry']].set_crs(28992)
+            areas = areas[['geometry']].set_crs(crs)
         else:
-            areas = areas[['geometry']].to_crs(28992)
+            areas = areas[['geometry']].to_crs(crs)
     network_graph = create_graph_based_on_nodes_edges(nodes, edges)
     network_graph = split_graph_based_on_node_id(network_graph, split_nodes)
     nodes, edges = add_basin_code_from_network_to_nodes_and_edges(
@@ -162,12 +163,3 @@ def create_basins_using_split_nodes(
     basins, nodes = create_basins_based_on_basin_areas_or_nodes(basin_areas, nodes)
     return basin_areas, basins, areas, nodes, edges, split_nodes
 
-
-def create_additional_basins_for_main_channels(
-    nodes: gpd.GeoDataFrame,
-    edges: gpd.GeoDataFrame,
-    main_channels: gpd.GeoDataFrame,
-    basin: gpd.GeoDataFrame,
-):
-    """for input main_channels (Linstrings), find connected edges/nodes and define whether"""
-    raise ValueError('not yet implemented')

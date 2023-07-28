@@ -2,6 +2,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from typing import Dict, List
+from .general_functions import find_nearest_nodes
 
 
 def create_objects_gdf(
@@ -14,7 +15,13 @@ def create_objects_gdf(
     gdf = gpd.GeoDataFrame(
         data=data, geometry=gpd.points_from_xy(xcoor, ycoor), crs=crs
     )
-    return gdf.sjoin(nodes_gdf).drop(columns=["index_right"])
+    ind_nodes = find_nearest_nodes(
+        search_locations=gdf, 
+        nodes=nodes_gdf, 
+        id_column='mesh1d_nNodes'
+    )
+    gdf['mesh1d_nNodes'] = ind_nodes
+    return gdf
 
 
 def get_dhydro_network_objects(map_data, his_data, crs):
@@ -30,13 +37,15 @@ def get_dhydro_network_objects(map_data, his_data, crs):
     print(" - edges and discharges")
     weirs = get_weirs_dhydro_network(his_data, nodes, crs)
     print(" - weirs")
+    uniweirs = get_uniweirs_dhydro_network(his_data, nodes, crs)
+    print(" - uniweirs")
     pumps = get_pumps_dhydro_network(his_data, nodes, crs)
     print(" - pumps")
     confluences = get_confluences_dhydro_network(nodes, edges)
     print(" - confluences")
     bifurcations = get_bifurcations_dhydro_network(nodes, edges)
     print(" - bifurcations")
-    return nodes, nodes_h, edges, edges_q, weirs, pumps, confluences, bifurcations
+    return nodes, nodes_h, edges, edges_q, weirs, uniweirs, pumps, confluences, bifurcations
 
 
 def get_nodes_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
@@ -99,8 +108,8 @@ def get_weirs_dhydro_network(his_data, nodes_gdf, crs) -> gpd.GeoDataFrame:
     """Get weirs from dhydro_model"""
     weirs_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data["weirgens"]},
-        xcoor=his_data.weirgen_geom_node_coordx.data[::2],
-        ycoor=his_data.weirgen_geom_node_coordy.data[::2],
+        xcoor=his_data.weir_input_geom_node_coordx,
+        ycoor=his_data.weir_input_geom_node_coordy,
         nodes_gdf=nodes_gdf[["mesh1d_nNodes", "geometry"]],
         crs=crs,
     )
@@ -108,12 +117,25 @@ def get_weirs_dhydro_network(his_data, nodes_gdf, crs) -> gpd.GeoDataFrame:
     return weirs_gdf
 
 
+def get_uniweirs_dhydro_network(his_data, nodes_gdf, crs) -> gpd.GeoDataFrame:
+    """Get weirs from dhydro_model"""
+    uniweirs_gdf = create_objects_gdf(
+        data={"mesh1d_node_id": his_data["universalWeirs"]},
+        xcoor=his_data.uniweir_input_geom_node_coordx,
+        ycoor=his_data.uniweir_input_geom_node_coordy,
+        nodes_gdf=nodes_gdf[["mesh1d_nNodes", "geometry"]],
+        crs=crs,
+    )
+    uniweirs_gdf['object_type'] = 'uniweir'
+    return uniweirs_gdf
+
+
 def get_pumps_dhydro_network(his_data, nodes_gdf, crs) -> gpd.GeoDataFrame:
     """Get pumps from dhydro_model"""
     pumps_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.pumps},
-        xcoor=his_data.pump_geom_node_coordx.data[::2],
-        ycoor=his_data.pump_geom_node_coordy.data[::2],
+        xcoor=his_data.pump_input_geom_node_coordx,
+        ycoor=his_data.pump_input_geom_node_coordy,
         nodes_gdf=nodes_gdf[["mesh1d_nNodes", "geometry"]],
         crs=crs,
     )
