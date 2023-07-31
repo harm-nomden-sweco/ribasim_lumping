@@ -47,6 +47,8 @@ class RibasimLumpingNetwork(BaseModel):
     ribasim_edges_gdf: gpd.GeoDataFrame = None
     basin_connections_gdf: gpd.GeoDataFrame = None
     boundaries_gdf: gpd.GeoDataFrame = None
+    boundary_basin_connections_gdf: gpd.GeoDataFrame = None
+    splitnodes_moved_gdf: gpd.GeoDataFrame = None
     crs: int = 28992
 
     class Config:
@@ -215,7 +217,9 @@ class RibasimLumpingNetwork(BaseModel):
             basins=self.basins_gdf,
             basin_connections=self.basin_connections_gdf,
             ribasim_edges=self.ribasim_edges_gdf,
-            boundaries=self.boundaries_gdf
+            boundaries=self.boundaries_gdf,
+            boundary_basin_connections=self.boundary_basin_connections_gdf,
+            splitnodes_moved = self.splitnodes_moved_gdf
         )
         for gdf_name, gdf in gdfs.items():
             if gdf is None:
