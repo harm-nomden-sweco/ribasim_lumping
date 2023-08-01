@@ -22,11 +22,35 @@ def create_graph_based_on_nodes_edges(
     return graph
 
 
-def split_graph_based_on_node_id(
-    graph: nx.DiGraph, split_nodes: gpd.GeoDataFrame
+def split_graph_based_on_split_nodes(
+    graph: nx.DiGraph, split_nodes: gpd.GeoDataFrame, edges_gdf: gpd.GeoDataFrame
 ) -> nx.DiGraph:
-    """split networkx graph at split_node_ids"""
-    for split_node_id in split_nodes.mesh1d_nNodes.values:
+    """split networkx graph at split_edge or split_node"""
+
+    # split on edge: delete edge, create 2 nodes, create 2 edges
+    split_nodes_edges = split_nodes[split_nodes.mesh1d_nEdges!=-1].copy()
+    split_edges = edges_gdf[edges_gdf.mesh1d_nEdges.isin(split_nodes_edges.mesh1d_nEdges.values)].copy()
+    split_edges = split_edges[['start_node_no', 'end_node_no']].to_dict('tight')['data']
+    split_edges = [coor for coor in split_edges if coor in graph.edges]
+
+    graph.remove_edges_from(split_edges)
+
+    split_nodes_edges['new_node_no1'] = 998_000_000_000 + split_nodes_edges.mesh1d_nEdges * 1_000 + 1
+    split_nodes_edges['new_node_no2'] = 998_000_000_000 + split_nodes_edges.mesh1d_nEdges * 1_000 + 2
+    split_nodes_edges['new_node_pos'] = split_nodes_edges.geometry.apply(lambda x: (x.x, x.y))
+
+    split_nodes_edges['upstream_node_no'] = [e[0] for e in split_edges]
+    split_nodes_edges['downstream_node_no'] = [e[1] for e in split_edges]
+
+    for i_edge, new in split_nodes_edges.iterrows():
+        graph.add_node(new.new_node_no1, pos=new.new_node_pos)
+        graph.add_node(new.new_node_no2, pos=new.new_node_pos)
+        graph.add_edge(new.upstream_node_no, new.new_node_no1)
+        graph.add_edge(new.new_node_no2, new.downstream_node_no)
+
+    # split_node: delete node and delete x edges, create x nodes, create x edges
+    split_nodes_nodes = split_nodes[split_nodes.mesh1d_nNodes!=-1]
+    for split_node_id in split_nodes_nodes.mesh1d_nNodes.values:
         if split_node_id not in graph:
             continue
         split_node_pos = graph.nodes[split_node_id]["pos"]
@@ -154,12 +178,12 @@ def create_basins_using_split_nodes(
         else:
             areas = areas[['geometry']].to_crs(crs)
     network_graph = create_graph_based_on_nodes_edges(nodes, edges)
-    network_graph = split_graph_based_on_node_id(network_graph, split_nodes)
+    network_graph = split_graph_based_on_split_nodes(network_graph, split_nodes, edges)
     nodes, edges = add_basin_code_from_network_to_nodes_and_edges(
         network_graph, nodes, edges, split_nodes
     )
     split_nodes = check_if_split_node_is_used(split_nodes, nodes, edges)
     areas, basin_areas = add_basin_code_from_edges_to_areas_and_create_basin(edges, areas)
     basins, nodes = create_basins_based_on_basin_areas_or_nodes(basin_areas, nodes)
-    return basin_areas, basins, areas, nodes, edges, split_nodes
+    return basin_areas, basins, areas, nodes, edges, split_nodes, network_graph
 

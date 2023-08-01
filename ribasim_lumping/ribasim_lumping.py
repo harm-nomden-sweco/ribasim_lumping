@@ -136,6 +136,8 @@ class RibasimLumpingNetwork(BaseModel):
         weirs: bool = False,
         uniweirs: bool = False,
         pumps: bool = False,
+        split_object_ids_to_include: List[int] = [],
+        split_object_ids_to_exclude: List[int] = [],
         split_node_ids_to_include: List[int] = [],
         split_node_ids_to_exclude: List[int] = [],
     ) -> gpd.GeoDataFrame:
@@ -147,22 +149,40 @@ class RibasimLumpingNetwork(BaseModel):
             uniweirs=uniweirs,
             pumps=pumps,
         )
+        # include split_nodes with node_id
+        split_objects = pd.concat([self.weirs_gdf, self.uniweirs_gdf, self.pumps_gdf])
+        split_objects_to_include = split_objects[
+            split_objects.mesh1d_node_id.isin(split_object_ids_to_include)
+        ]
+        split_nodes = pd.concat([split_nodes_objects, split_objects_to_include])
+        # exclude split_nodes with node_id
+        split_nodes = split_nodes[
+            ~split_nodes.mesh1d_node_id.isin(split_object_ids_to_exclude)
+        ]
+
         # add additional split_node extracting them from nodes_gdf based on id
-        split_nodes = self.nodes_gdf[
+        split_nodes_to_include = self.nodes_gdf[
             self.nodes_gdf.mesh1d_nNodes.isin(split_node_ids_to_include)
         ].reset_index(drop=True)
         # combine split_nodes
-        split_nodes = pd.concat([split_nodes_objects, split_nodes])
+        split_nodes = pd.concat([split_nodes, split_nodes_to_include])
         # exclude split_nodes based on id
         split_nodes = split_nodes[
-            ~split_nodes['mesh1d_nNodes'].isin(split_node_ids_to_exclude)
+            ~split_nodes.mesh1d_nNodes.isin(split_node_ids_to_exclude)
         ]
+        # drop duplicates
+        split_nodes = split_nodes.drop_duplicates()
         # check whether all split_node_ids are present in list
-        missing = set(split_node_ids_to_include).difference(
+        missing = list(set(split_node_ids_to_include).difference(
             split_nodes.mesh1d_nNodes.values
-        )
+        )) + list(set(split_node_ids_to_include).difference(
+            split_nodes.mesh1d_nNodes.values
+        ))
         if len(missing):
             print(f" - Selected split_node_ids not present in network: {missing}")
+        split_nodes['mesh1d_nEdges'] = split_nodes['mesh1d_nEdges'].fillna(-1).astype(int)
+        split_nodes['mesh1d_nNodes'] = split_nodes['mesh1d_nNodes'].fillna(-1).astype(int)
+        split_nodes = split_nodes.drop_duplicates(subset=['mesh1d_nEdges', 'mesh1d_nNodes'])
         self.split_nodes = split_nodes
         return split_nodes
 
@@ -175,7 +195,7 @@ class RibasimLumpingNetwork(BaseModel):
             search_locations=split_nodes,
             nodes=self.nodes_gdf,
             id_column="mesh1d_nNodes",
-        )
+        )["mesh1d_nNodes"].values
         self.split_nodes = self.add_split_nodes(nearest_node_ids)
         return self.split_nodes
 
@@ -203,7 +223,7 @@ class RibasimLumpingNetwork(BaseModel):
             crs=self.crs,
         )
         self.basin_areas_gdf, self.basins_gdf, self.areas_gdf, self.nodes_gdf, \
-            self.edges_gdf, self.split_nodes = results_basins
+            self.edges_gdf, self.split_nodes, self.network_graph = results_basins
         return results_basins
 
     # def create_connections_between_basins(self) -> Tuple[gpd.GeoDataFrame]:
