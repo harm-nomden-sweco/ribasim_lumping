@@ -2,34 +2,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from typing import Dict, List
-from .general_functions import find_nearest_nodes, find_nearest_edges
-
-
-def create_objects_gdf(
-    data: Dict,
-    xcoor: List[float],
-    ycoor: List[float],
-    edges_gdf: gpd.GeoDataFrame,
-    crs: int = 28992,
-):
-    gdf = gpd.GeoDataFrame(
-        data=data, 
-        geometry=gpd.points_from_xy(xcoor, ycoor), 
-        crs=crs
-    )
-    nearest_points = find_nearest_edges(
-        search_locations=gdf, 
-        edges=edges_gdf, 
-        id_column='mesh1d_nEdges',
-        crs=crs
-    )
-    gdf = gpd.GeoDataFrame(
-        data=(gdf.drop(columns='geometry')
-              .merge(nearest_points, how='outer', left_index=True, right_index=True)),
-        geometry='geometry',
-        crs=crs
-    )
-    return gdf
+from .general_functions import create_objects_gdf
 
 
 def get_dhydro_network_objects(map_data, his_data, crs):
@@ -40,24 +13,23 @@ def get_dhydro_network_objects(map_data, his_data, crs):
         raise ValueError("D-Hydro simulation his-data is not read")
     print("D-HYDRO-network analysed:")
     nodes, nodes_h = get_nodes_dhydro_network(map_data, crs)
-    print(" - nodes and waterlevels")
     edges, edges_q = get_edges_dhydro_network(map_data, crs)
-    print(" - edges and discharges")
-    weirs = get_weirs_dhydro_network(his_data, edges, crs)
-    print(" - weirs")
-    uniweirs = get_uniweirs_dhydro_network(his_data, edges, crs)
-    print(" - uniweirs")
+    stations = get_stations_dhydro_network(his_data, edges, crs)
     pumps = get_pumps_dhydro_network(his_data, edges, crs)
-    print(" - pumps")
+    weirs = get_weirs_dhydro_network(his_data, edges, crs)
+    orifices = get_orifices_dhydro_network(his_data, edges, crs)
+    bridges = get_bridges_dhydro_network(his_data, edges, crs)
+    culverts = get_culverts_dhydro_network(his_data, edges, crs)
+    uniweirs = get_uniweirs_dhydro_network(his_data, edges, crs)
     confluences = get_confluences_dhydro_network(nodes, edges)
-    print(" - confluences")
     bifurcations = get_bifurcations_dhydro_network(nodes, edges)
-    print(" - bifurcations")
-    return nodes, nodes_h, edges, edges_q, weirs, uniweirs, pumps, confluences, bifurcations
+    return nodes, nodes_h, edges, edges_q, stations, pumps, weirs, \
+        orifices, bridges, culverts, uniweirs, confluences, bifurcations
 
 
 def get_nodes_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
     """calculate nodes dataframe"""
+    print(" - nodes and waterlevels")
     nodes_gdf = (
         map_data["mesh1d_node_id"]
         .ugrid.to_geodataframe()
@@ -72,6 +44,7 @@ def get_nodes_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
 
 def get_edges_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
     """calculate edges dataframe"""
+    print(" - edges and discharges")
     edges = (
         map_data["mesh1d_q1"][-1][-1]
         .ugrid.to_geodataframe()
@@ -92,28 +65,37 @@ def get_edges_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
     return edges_gdf, edges_q_df
 
 
-def get_confluences_dhydro_network(nodes_gdf, edges_gdf) -> gpd.GeoDataFrame:
-    """calculate confluence points based on finding multiple inflows"""
-    c = edges_gdf.end_node_no.value_counts()
-    confluences_gdf = nodes_gdf[
-        nodes_gdf.index.isin(c.index[c.gt(1)])
-    ].reset_index(drop=True)
-    confluences_gdf.object_type = 'confluence'
-    return confluences_gdf
+def get_stations_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
+    """Get stations from dhydro_model"""
+    print(" - stations", end="", flush=True)
+    stations_gdf = create_objects_gdf(
+        data={"mesh1d_node_id": his_data.stations},
+        xcoor=his_data.station_geom_node_coordx,
+        ycoor=his_data.station_geom_node_coordy,
+        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+        crs=crs,
+    )
+    stations_gdf['object_type'] = 'station'
+    return stations_gdf
 
 
-def get_bifurcations_dhydro_network(nodes_gdf, edges_gdf) -> gpd.GeoDataFrame:
-    """calculate split points based on finding multiple outflows"""
-    d = edges_gdf.start_node_no.value_counts()
-    bifurcations_gdf = nodes_gdf[
-        nodes_gdf.index.isin(d.index[d.gt(1)])
-    ].reset_index(drop=True)
-    bifurcations_gdf.object_type = 'bifurcation'
-    return bifurcations_gdf
+def get_pumps_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
+    """Get pumps from dhydro_model"""
+    print(" / pumps", end="", flush=True)
+    pumps_gdf = create_objects_gdf(
+        data={"mesh1d_node_id": his_data.pumps},
+        xcoor=his_data.pump_input_geom_node_coordx,
+        ycoor=his_data.pump_input_geom_node_coordy,
+        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+        crs=crs,
+    )
+    pumps_gdf['object_type'] = 'pump'
+    return pumps_gdf
 
 
 def get_weirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     """Get weirs from dhydro_model"""
+    print(" / weirs", end="", flush=True)
     weirs_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.weirgens},
         xcoor=his_data.weir_input_geom_node_coordx,
@@ -125,8 +107,51 @@ def get_weirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     return weirs_gdf
 
 
+def get_orifices_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
+    """Get orifices from dhydro_model"""
+    print(" / orifices", end="", flush=True)
+    orifices_gdf = create_objects_gdf(
+        data={"mesh1d_node_id": his_data.orifice},
+        xcoor=his_data.orifice_input_geom_node_coordx,
+        ycoor=his_data.orifice_input_geom_node_coordy,
+        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+        crs=crs,
+    )
+    orifices_gdf['object_type'] = 'orifice'
+    return orifices_gdf
+
+
+def get_bridges_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
+    """Get bridges from dhydro_model"""
+    print(" / bridges", end="", flush=True)
+    bridges_gdf = create_objects_gdf(
+        data={"mesh1d_node_id": his_data.bridge},
+        xcoor=his_data.bridge_input_geom_node_coordx,
+        ycoor=his_data.bridge_input_geom_node_coordy,
+        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+        crs=crs,
+    )
+    bridges_gdf['object_type'] = 'bridge'
+    return bridges_gdf
+
+
+def get_culverts_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
+    """Get culverts from dhydro_model"""
+    print(" / culverts", end="", flush=True)
+    culverts_gdf = create_objects_gdf(
+        data={"mesh1d_node_id": his_data.culvert},
+        xcoor=his_data.culvert_input_geom_node_coordx,
+        ycoor=his_data.culvert_input_geom_node_coordy,
+        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+        crs=crs,
+    )
+    culverts_gdf['object_type'] = 'culvert'
+    return culverts_gdf
+
+
 def get_uniweirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     """Get weirs from dhydro_model"""
+    print(" / uniweirs", end="", flush=True)
     uniweirs_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.universalWeirs},
         xcoor=his_data.uniweir_input_geom_node_coordx,
@@ -138,15 +163,25 @@ def get_uniweirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     return uniweirs_gdf
 
 
-def get_pumps_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
-    """Get pumps from dhydro_model"""
-    pumps_gdf = create_objects_gdf(
-        data={"mesh1d_node_id": his_data.pumps},
-        xcoor=his_data.pump_input_geom_node_coordx,
-        ycoor=his_data.pump_input_geom_node_coordy,
-        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
-        crs=crs,
-    )
-    pumps_gdf['object_type'] = 'pump'
-    return pumps_gdf
+def get_confluences_dhydro_network(nodes_gdf, edges_gdf) -> gpd.GeoDataFrame:
+    """calculate confluence points based on finding multiple inflows"""
+    print(" / confluences", end="", flush=True)
+    c = edges_gdf.end_node_no.value_counts()
+    confluences_gdf = nodes_gdf[
+        nodes_gdf.index.isin(c.index[c.gt(1)])
+    ].reset_index(drop=True)
+    confluences_gdf.object_type = 'confluence'
+    return confluences_gdf
+
+
+def get_bifurcations_dhydro_network(nodes_gdf, edges_gdf) -> gpd.GeoDataFrame:
+    """calculate split points based on finding multiple outflows"""
+    print(" / bifurcations")
+    d = edges_gdf.start_node_no.value_counts()
+    bifurcations_gdf = nodes_gdf[
+        nodes_gdf.index.isin(d.index[d.gt(1)])
+    ].reset_index(drop=True)
+    bifurcations_gdf.object_type = 'bifurcation'
+    return bifurcations_gdf
+
 
