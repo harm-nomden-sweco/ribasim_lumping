@@ -20,7 +20,7 @@ from .utils.read_simulation_data_utils import (
     get_simulation_names_from_dir,
     combine_data_from_simulations_sets,
 )
-from .utils.generate_basins_areas import create_basins_using_split_nodes
+from .utils.generate_basins_areas import create_basins_and_connections_using_split_nodes
 from .utils.get_dhydro_network_objects import get_dhydro_network_objects
 from .utils.general_functions import find_nearest_nodes
 
@@ -29,6 +29,8 @@ class RibasimLumpingNetwork(BaseModel):
     """class to select datapoints from different simulations at certain timestamps"""
 
     name: str
+    results_dir: Path
+    areas_gdf: gpd.GeoDataFrame
     his_data: xu.UgridDataset = None
     map_data: xu.UgridDataset = None
     edges_gdf: gpd.GeoDataFrame = None
@@ -36,22 +38,31 @@ class RibasimLumpingNetwork(BaseModel):
     edges_q_df: pd.DataFrame = None
     nodes_h_df: pd.DataFrame = None
     network_graph: nx.DiGraph = None
-    areas_gdf: gpd.GeoDataFrame = None
     basin_areas_gdf: gpd.GeoDataFrame = None
     basins_gdf: gpd.GeoDataFrame = None
+    stations_gdf: gpd.GeoDataFrame = None
+    pumps_gdf: gpd.GeoDataFrame = None
+    weirs_gdf: gpd.GeoDataFrame = None
+    orifices_gdf: gpd.GeoDataFrame = None
+    bridges_gdf: gpd.GeoDataFrame = None
+    culverts_gdf: gpd.GeoDataFrame = None
+    uniweirs_gdf: gpd.GeoDataFrame = None
     confluences_gdf: gpd.GeoDataFrame = None
     bifurcations_gdf: gpd.GeoDataFrame = None
-    weirs_gdf: gpd.GeoDataFrame = None
-    pumps_gdf: gpd.GeoDataFrame = None
-    culverts_gdf: gpd.GeoDataFrame = None
     split_nodes: gpd.GeoDataFrame = None
-    ribasim_edges_gdf: gpd.GeoDataFrame = None
     basin_connections_gdf: gpd.GeoDataFrame = None
+    boundaries_gdf: gpd.GeoDataFrame = None
+    boundary_basin_connections_gdf: gpd.GeoDataFrame = None
     crs: int = 28992
 
     class Config:
         arbitrary_types_allowed = True
 
+    def __init__(self, **kwargs):
+        areas_gdf = kwargs.get('areas_gdf', None)
+        if areas_gdf is not None:
+            kwargs['areas_gdf'] = areas_gdf.explode(index_parts=False)
+        super().__init__(**kwargs)
 
     def add_data_from_simulations_set(
         self,
@@ -84,14 +95,17 @@ class RibasimLumpingNetwork(BaseModel):
         return self.his_data, self.map_data
 
 
-    def get_network_data(self):
+    def get_network_data(self, file_bc):
         """Extracts nodes, edges, confluences, bifurcations, weirs, pumps from his/map"""
-        results = get_dhydro_network_objects(self.map_data, self.his_data, self.crs)
+        results = get_dhydro_network_objects(self.map_data, self.his_data, self.crs, file_bc)
+
         self.nodes_gdf, self.nodes_h_df, self.edges_gdf, self.edges_q_df, \
-            self.weirs_gdf, self.pumps_gdf, self.confluences_gdf, self.bifurcations_gdf = results
+            self.stations_gdf, self.pumps_gdf, self.weirs_gdf, self.orifices_gdf, \
+            self.bridges_gdf, self.culverts_gdf, self.uniweirs_gdf, \
+            self.confluences_gdf, self.bifurcations_gdf, self.boundaries_gdf = results
 
 
-    def get_qh_relation(self, node_no:int, edge_no:int, set:str=None):
+    def get_qh_relation_node_edge(self, node_no:int, edge_no:int, set:str=None):
         h_x = self.nodes_h_df.loc[node_no]
         q_x = self.edges_q_df.loc[edge_no]
         qh_x = q_x.merge(h_x, how='outer', left_index=True, right_index=True)
@@ -105,57 +119,112 @@ class RibasimLumpingNetwork(BaseModel):
         self,
         bifurcations: bool = False,
         confluences: bool = False,
-        weirs: bool = False,
+        stations: bool = False,
         pumps: bool = False,
+        weirs: bool = False,
+        orifices: bool = False,
+        bridges: bool = False,
+        culverts: bool = False,
+        uniweirs: bool = False,
     ):
         """receive node_ids from bifurcations, confluences, weirs and/or pumps"""
-        list_objects_gdf = []
-        if bifurcations and self.bifurcations_gdf is not None:
-            list_objects_gdf.append(self.bifurcations_gdf)
-        if confluences and self.confluences_gdf is not None:
-            list_objects_gdf.append(self.confluences_gdf)
-        if weirs and self.weirs_gdf is not None:
-            list_objects_gdf.append(self.weirs_gdf)
-        if pumps and self.pumps_gdf is not None:
-            list_objects_gdf.append(self.pumps_gdf)
-        split_nodes_objects = pd.concat(list_objects_gdf)
-        return split_nodes_objects
+        list_objects = [
+            bifurcations, confluences, stations, pumps, 
+            weirs, orifices, bridges, culverts, uniweirs
+        ]
+        list_gdfs = [
+            self.bifurcations_gdf,
+            self.confluences_gdf,
+            self.stations_gdf,
+            self.pumps_gdf,
+            self.weirs_gdf,
+            self.orifices_gdf,
+            self.bridges_gdf,
+            self.culverts_gdf,
+            self.uniweirs_gdf
+        ]
+        split_nodes = gpd.GeoDataFrame(
+            columns=['mesh1d_node_id', 'mesh1d_nEdges', 'geometry', 'object_type'],
+            geometry='geometry',
+            crs=self.crs
+        )
+        for gdf_name, gdf in zip(list_objects, list_gdfs):
+            if gdf_name and gdf is not None:
+                split_nodes = pd.concat([split_nodes, gdf])
+        return split_nodes
 
 
-    def add_split_nodes_based_on_node_ids(
+    def add_split_nodes(
         self,
         bifurcations: bool = False,
         confluences: bool = False,
-        weirs: bool = False,
+        stations: bool = False,
         pumps: bool = False,
-        split_node_ids_to_include: List[int] = [],
-        split_node_ids_to_exclude: List[int] = [],
+        weirs: bool = False,
+        orifices: bool = False,
+        bridges: bool = False,
+        culverts: bool = False,
+        uniweirs: bool = False,
+        structures_ids_to_include: List[int] = [],
+        structures_ids_to_exclude: List[int] = [],
+        node_ids_to_include: List[int] = [],
+        node_ids_to_exclude: List[int] = [],
     ) -> gpd.GeoDataFrame:
         # get split_nodes based on type
-        split_nodes_objects = self.get_split_nodes_based_on_type(
+        split_nodes_structures = self.get_split_nodes_based_on_type(
             bifurcations=bifurcations,
             confluences=confluences,
-            weirs=weirs,
+            stations=stations,
             pumps=pumps,
+            weirs=weirs,
+            orifices=orifices,
+            bridges=bridges,
+            culverts=culverts,
+            uniweirs=uniweirs,
         )
+        # include split_nodes with node_id
+        all_structures = self.get_split_nodes_based_on_type(
+            stations=True, pumps=True, weirs=True, orifices=True, 
+            bridges=True, culverts=True, uniweirs=True,
+        )
+        structures_to_include = all_structures[
+            all_structures.mesh1d_node_id.isin(structures_ids_to_include)
+        ]
+        split_nodes = pd.concat([split_nodes_structures, structures_to_include])
+        # exclude split_nodes with node_id
+        split_nodes = split_nodes[
+            ~split_nodes.mesh1d_node_id.isin(structures_ids_to_exclude)
+        ]
+
         # add additional split_node extracting them from nodes_gdf based on id
-        split_nodes = self.nodes_gdf[
-            self.nodes_gdf.mesh1d_nNodes.isin(split_node_ids_to_include)
+        nodes_to_include = self.nodes_gdf[
+            self.nodes_gdf.mesh1d_nNodes.isin(node_ids_to_include)
         ].reset_index(drop=True)
+        nodes_to_include['object_type'] = 'node'
+        nodes_to_include['projection_x'] = nodes_to_include.geometry.x
+        nodes_to_include['projection_y'] = nodes_to_include.geometry.y
         # combine split_nodes
-        split_nodes = pd.concat([split_nodes_objects, split_nodes])
+        split_nodes = pd.concat([split_nodes, nodes_to_include])
         # exclude split_nodes based on id
         split_nodes = split_nodes[
-            ~split_nodes['mesh1d_nNodes'].isin(split_node_ids_to_exclude)
+            ~split_nodes.mesh1d_nNodes.isin(node_ids_to_exclude)
         ]
+        # drop duplicates
+        split_nodes = split_nodes.drop_duplicates()
         # check whether all split_node_ids are present in list
-        missing = set(split_node_ids_to_include).difference(
+        missing = list(set(node_ids_to_include).difference(
             split_nodes.mesh1d_nNodes.values
-        )
+        ))
         if len(missing):
             print(f" - Selected split_node_ids not present in network: {missing}")
-        self.split_nodes = split_nodes
-        return split_nodes
+        split_nodes['mesh1d_nEdges'] = split_nodes['mesh1d_nEdges'].fillna(-1).astype(int)
+        split_nodes['mesh1d_nNodes'] = split_nodes['mesh1d_nNodes'].fillna(-1).astype(int)
+        split_nodes = split_nodes.drop_duplicates(subset=['mesh1d_nEdges', 'mesh1d_nNodes'])
+        self.split_nodes = split_nodes.reset_index(drop=True)
+        print(f"{len(split_nodes)} split locations")
+        for obj_type in self.split_nodes.object_type.unique():
+            print(f" - {obj_type}: {len(self.split_nodes[self.split_nodes['object_type']==obj_type])}")
+        return self.split_nodes
 
 
     def add_split_nodes_based_on_locations(
@@ -166,8 +235,8 @@ class RibasimLumpingNetwork(BaseModel):
             search_locations=split_nodes,
             nodes=self.nodes_gdf,
             id_column="mesh1d_nNodes",
-        )
-        self.split_nodes = self.add_split_nodes_based_on_node_ids(nearest_node_ids)
+        )["mesh1d_nNodes"].values
+        self.split_nodes = self.add_split_nodes(nearest_node_ids)
         return self.split_nodes
 
 
@@ -178,45 +247,39 @@ class RibasimLumpingNetwork(BaseModel):
         return list(self.split_nodes.mesh1d_nNodes.values)
 
 
-    def create_basins_based_on_split_nodes(
-        self,
-        split_nodes: gpd.GeoDataFrame = None,
-        split_node_ids: List[int] = None,
-        areas: gpd.GeoDataFrame = None,
-        nodes: gpd.GeoDataFrame = None,
-        edges: gpd.GeoDataFrame = None,
-    ) -> Tuple[gpd.GeoDataFrame]:
-        if split_nodes is not None:
-            self.split_nodes = split_nodes
-        elif split_node_ids is not None:
-            self.add_split_nodes_based_on_node_ids(split_node_ids)
-        elif self.split_nodes is None:
-            raise ValueError("no split_nodes or split_node_ids provided")
+    def create_basins_and_connections_based_on_split_nodes(self) -> Tuple[gpd.GeoDataFrame]:
+        if self.split_nodes is None:
+            raise ValueError('no split_nodes defined: use .add_split_nodes()')
+        if self.nodes_gdf is None or self.edges_gdf is None:
+            raise ValueError('no nodes and/or edges defined: add d-hydro simulation results')
+        if self.areas_gdf is None:
+            raise ValueError('no areas defined: add areas-geodataframe (drainage areas)')
+        if self.boundaries_gdf is None:
+            raise ValueError('no boundaries defined: add boundaries-geodataframe')
 
-        if nodes is not None:
-            self.nodes_gdf = nodes
-        if edges is not None:
-            self.edges_gdf = edges
-        if areas is not None:
-            self.areas_gdf = areas
-        self.areas_gdf = self.areas_gdf[["geometry"]].explode(index_parts=False)
-
-        results_basins = create_basins_using_split_nodes(
+        results_basins = create_basins_and_connections_using_split_nodes(
             nodes=self.nodes_gdf,
             edges=self.edges_gdf,
             split_nodes=self.split_nodes,
             areas=self.areas_gdf,
+            boundaries=self.boundaries_gdf,
+            crs=self.crs,
         )
         self.basin_areas_gdf, self.basins_gdf, self.areas_gdf, self.nodes_gdf, \
-            self.edges_gdf, self.split_nodes = results_basins
+            self.edges_gdf, self.split_nodes, self.network_graph, \
+                self.basin_connections_gdf, self.boundary_basin_connections_gdf = results_basins
         return results_basins
+
+    # def create_connections_between_basins(self) -> Tuple[gpd.GeoDataFrame]:
 
 
     def export_to_geopackage(
         self,
-        output_dir: Union[Path, str],
+        results_dir: Union[Path, str] = None,
     ):
-        dir_output = Path(output_dir, self.name)
+        if results_dir is None:
+            results_dir = self.results_dir
+        dir_output = Path(results_dir, self.name)
         if not dir_output.exists():
             dir_output.mkdir()
 
@@ -225,41 +288,47 @@ class RibasimLumpingNetwork(BaseModel):
         qgz_path_stored_dir = os.path.abspath(os.path.dirname(__file__))
         qgz_path_stored = Path(qgz_path_stored_dir, "assets\\ribasim_network.qgz")
 
-        gdfs = dict(
+        gdfs_orig = dict(
+            areas=self.areas_gdf,
             nodes=self.nodes_gdf,
             edges=self.edges_gdf,
-            confluences=self.confluences_gdf,
-            bifurcations=self.bifurcations_gdf,
-            weirs=self.weirs_gdf,
+            stations=self.stations_gdf,
             pumps=self.pumps_gdf,
-            areas=self.areas_gdf,
+            weirs=self.weirs_gdf,
+            orifices=self.orifices_gdf,
+            bridges=self.bridges_gdf,
+            culverts=self.culverts_gdf,
+            uniweirs=self.uniweirs_gdf,
             basin_areas=self.basin_areas_gdf,
             split_nodes=self.split_nodes,
             basins=self.basins_gdf,
             basin_connections=self.basin_connections_gdf,
-            ribasim_edges=self.ribasim_edges_gdf
+            boundaries=self.boundaries_gdf,
+            boundary_basin_connections=self.boundary_basin_connections_gdf,
         )
-        print('Exporting:')
-        for gdf_name, gdf in gdfs.items():
+        gdfs_none = dict()
+        gdfs = dict()
+        for gdf_name, gdf in gdfs_orig.items():
             if gdf is None:
-                print(f' - {gdf_name} (not available)')
-                gpd.GeoDataFrame(
-                    columns=["geometry"], geometry="geometry", crs=self.crs
-                ).to_file(gpkg_path, layer=gdf_name, driver="GPKG")
+                gdfs_none[gdf_name] = gdf
             else:
-                print(f' - {gdf_name}')
-                gdf.to_file(gpkg_path, layer=gdf_name, driver="GPKG")
+                gdfs[gdf_name] = gdf
+
+        print(f'Exporting to geopackage:')
+        print(f' - ', end="", flush=True)
+        for gdf_name, gdf in gdfs.items():
+            print(f'{gdf_name}, ', end="", flush=True)
+            gdf.to_file(gpkg_path, layer=gdf_name, driver="GPKG")
+
+        print("")
+        print(" - not available: ", end="", flush=True)
+        empty_gdf = gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs=self.crs)
+        for gdf_name, gdf in gdfs_none.items():
+            print(f'{gdf_name}, ', end="", flush=True)
+            empty_gdf.to_file(gpkg_path, layer=gdf_name, driver="GPKG")
+
         if not qgz_path.exists():
             shutil.copy(qgz_path_stored, qgz_path)
+        print("")
+        print(f'Export location: {qgz_path}:')
 
-
-    # def get_qh_relations_weirs(self, weirs_ids: List[str] = None):
-    #     # TODO: get QH relations from selected locations
-    #     return weirs_ids
-
-
-    # def get_qh_relation_edges_around_node(
-    #     self, nodes_ids: List[str] = None, nodes_locations: List[Point] = None
-    # ):
-    #     # TODO: get QH relations from selected locations
-    #     return nodes_ids
