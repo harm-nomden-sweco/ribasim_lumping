@@ -70,6 +70,8 @@ def get_edges_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
 def get_stations_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     """Get stations from dhydro_model"""
     print(" - stations", end="", flush=True)
+    if 'stations' not in his_data:
+        return None
     stations_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.stations},
         xcoor=his_data.station_geom_node_coordx,
@@ -84,6 +86,8 @@ def get_stations_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
 def get_pumps_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     """Get pumps from dhydro_model"""
     print(" / pumps", end="", flush=True)
+    if 'pumps' not in his_data:
+        return None
     pumps_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.pumps},
         xcoor=his_data.pump_input_geom_node_coordx,
@@ -98,6 +102,8 @@ def get_pumps_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
 def get_weirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     """Get weirs from dhydro_model"""
     print(" / weirs", end="", flush=True)
+    if 'weirgens' not in his_data:
+        return None
     weirs_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.weirgens},
         xcoor=his_data.weir_input_geom_node_coordx,
@@ -112,6 +118,8 @@ def get_weirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
 def get_orifices_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     """Get orifices from dhydro_model"""
     print(" / orifices", end="", flush=True)
+    if 'orifice' not in his_data:
+        return None
     orifices_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.orifice},
         xcoor=his_data.orifice_input_geom_node_coordx,
@@ -126,6 +134,8 @@ def get_orifices_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
 def get_bridges_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     """Get bridges from dhydro_model"""
     print(" / bridges", end="", flush=True)
+    if 'bridge' not in his_data:
+        return None
     bridges_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.bridge},
         xcoor=his_data.bridge_input_geom_node_coordx,
@@ -140,6 +150,8 @@ def get_bridges_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
 def get_culverts_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     """Get culverts from dhydro_model"""
     print(" / culverts", end="", flush=True)
+    if 'culvert' not in his_data:
+        return None
     culverts_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.culvert},
         xcoor=his_data.culvert_input_geom_node_coordx,
@@ -154,6 +166,8 @@ def get_culverts_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
 def get_uniweirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     """Get weirs from dhydro_model"""
     print(" / uniweirs", end="", flush=True)
+    if 'universalWeirs' not in his_data:
+        return None
     uniweirs_gdf = create_objects_gdf(
         data={"mesh1d_node_id": his_data.universalWeirs},
         xcoor=his_data.uniweir_input_geom_node_coordx,
@@ -196,7 +210,10 @@ def get_boundaries(file_bc, nodes):
     bc = pd.concat([bc.drop(['quantityunitpair'], axis=1), pd.DataFrame.from_records(bc['quantityunitpair'])[0].apply(pd.Series)], axis=1)
 
     # merge boundary with nodes
-    boundaries_gdf = nodes.merge(bc,left_on = 'mesh1d_node_id', right_on = 'name')
+    boundaries_gdf = nodes.merge(bc, left_on = 'mesh1d_node_id', right_on = 'name')
     boundaries_gdf = boundaries_gdf.drop(columns=['offset','factor','vertpositionindex','name', 'comments','datablock'])
     boundaries_gdf.insert(0, 'boundary_id', range(len(boundaries_gdf)))
+    if boundaries_gdf.empty:
+        return None
     return boundaries_gdf
+

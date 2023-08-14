@@ -30,7 +30,7 @@ class RibasimLumpingNetwork(BaseModel):
 
     name: str
     results_dir: Path
-    areas_gdf: gpd.GeoDataFrame
+    areas_gdf: gpd.GeoDataFrame = None
     his_data: xu.UgridDataset = None
     map_data: xu.UgridDataset = None
     edges_gdf: gpd.GeoDataFrame = None
@@ -59,16 +59,20 @@ class RibasimLumpingNetwork(BaseModel):
         arbitrary_types_allowed = True
 
     def __init__(self, **kwargs):
-        areas_gdf = kwargs.get('areas_gdf', None)
-        if areas_gdf is not None:
-            kwargs['areas_gdf'] = areas_gdf.explode(index_parts=False)
         super().__init__(**kwargs)
+        if self.areas_gdf is not None:
+            self.areas_gdf = self.areas_gdf.explode(index_parts=False)
+            if areas.crs is None:
+                areas = areas[['geometry']].set_crs(self.crs)
+            else:
+                areas = areas[['geometry']].to_crs(self.crs)
 
     def add_data_from_simulations_set(
         self,
         set_name: str,
         simulations_dir: Path,
-        simulations_names: List[str] = None,
+        simulations_names: List[str],
+        simulation_output_dir: str,
         simulations_ts: Union[List, pd.DatetimeIndex] = [-1],
     ) -> Tuple[xr.Dataset, xu.UgridDataset]:
         """receives his- and map-data
@@ -86,6 +90,7 @@ class RibasimLumpingNetwork(BaseModel):
             set_name=set_name,
             simulations_dir=simulations_dir,
             simulations_names=simulations_names,
+            simulation_output_dir=simulation_output_dir,
             simulations_ts=simulations_ts,
         )
         self.his_data = combine_data_from_simulations_sets(self.his_data, his_data)
@@ -253,9 +258,9 @@ class RibasimLumpingNetwork(BaseModel):
         if self.nodes_gdf is None or self.edges_gdf is None:
             raise ValueError('no nodes and/or edges defined: add d-hydro simulation results')
         if self.areas_gdf is None:
-            raise ValueError('no areas defined: add areas-geodataframe (drainage areas)')
+            print("no areas defined, will not generate basin_areas")
         if self.boundaries_gdf is None:
-            raise ValueError('no boundaries defined: add boundaries-geodataframe')
+            print("no boundaries defined, will not generate boundaries and boundaries_basin_connections")
 
         results_basins = create_basins_and_connections_using_split_nodes(
             nodes=self.nodes_gdf,
@@ -330,5 +335,5 @@ class RibasimLumpingNetwork(BaseModel):
         if not qgz_path.exists():
             shutil.copy(qgz_path_stored, qgz_path)
         print("")
-        print(f'Export location: {qgz_path}:')
+        print(f'Export location: {qgz_path}')
 

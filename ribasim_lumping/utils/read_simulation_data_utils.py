@@ -21,8 +21,9 @@ def get_simulation_names_from_dir(path_dir=None) -> List[str]:
 def get_data_from_simulation(
     simulations_dir: str,
     simulation_name: str,
+    simulation_output_dir: str,
     simulations_ts: Union[List, pd.DatetimeIndex],
-    n_start=0,
+    n_start: int = 0,
 ) -> Tuple[xr.Dataset, xu.UgridDataset]:
     """Gets simulation data
     - from a simulation
@@ -30,11 +31,32 @@ def get_data_from_simulation(
     - Replaces time coordinate with counter 'condition' (int). Starts counting at n_start
     Returns: map_data (edges/nodes) and his_data (structures) from one simulation"""
 
-    sim_dir = Path(simulations_dir, simulation_name + "_data")
-
-    his_file = Path(sim_dir, "FlowFM\\output\\FlowFM_his.nc")
-    his_data = xr.open_mfdataset([his_file], preprocess=dfmt.preprocess_hisnc)
-    # check if simulation timestamp is datetime, if not use isel.
+    sim_dir = Path(simulations_dir, simulation_name)
+    his_map_dir = Path(sim_dir, simulation_output_dir)
+    
+    # file names
+    his_file = [h for h in his_map_dir.glob('*_his.nc')]
+    if len(his_file) == 1:
+        his_file = his_file[0]
+    else:
+        raise ValueError(f'no his_file present: {his_map_dir}*_his.nc')
+    map_file = [m for m in his_map_dir.glob('*_map.nc')]
+    if len(map_file) == 1:
+        map_file = map_file[0]
+    else:
+        raise ValueError(f'no his_file present: {his_map_dir}*_map.nc')
+    
+    try:
+        his_data = xr.open_mfdataset([his_file], preprocess=dfmt.preprocess_hisnc)
+        map_data_xr = xr.open_dataset(map_file)
+        map_data = xu.open_dataset(map_file)
+        map_data["mesh1d_edge_nodes"] = map_data_xr["mesh1d_edge_nodes"]
+    except:
+        his_data = xr.open_mfdataset([his_file], preprocess=dfmt.preprocess_hisnc, decode_times=False)
+        map_data_xr = xr.open_dataset(map_file, decode_times=False)
+        map_data = xu.open_dataset(map_file, decode_times=False)
+        map_data["mesh1d_edge_nodes"] = map_data_xr["mesh1d_edge_nodes"]
+    
     if isinstance(simulations_ts[0], (datetime.datetime, pd.Timestamp)):
         his_data = his_data.sel(time=simulations_ts)
     else:
@@ -42,11 +64,6 @@ def get_data_from_simulation(
     his_data = his_data.rename({"time": "condition"})
     his_data.coords["condition"] = np.arange(n_start, n_start + len(his_data.condition))
 
-    map_file = Path(sim_dir, "FlowFM\\output\\FlowFM_map.nc")
-    map_data_xr = xr.open_dataset(map_file)
-    map_data = xu.open_dataset(map_file)
-    map_data["mesh1d_edge_nodes"] = map_data_xr["mesh1d_edge_nodes"]
-    # check if simulation timestamp is datetime, if not use isel.
     if isinstance(simulations_ts[0], (datetime.datetime, pd.Timestamp)):
         map_data = map_data.sel(time=simulations_ts)
     else:
@@ -60,6 +77,7 @@ def get_data_from_simulations_set(
     set_name: str,
     simulations_dir: Path,
     simulations_names: List[str],
+    simulation_output_dir: str,
     simulations_ts: Union[List, pd.DatetimeIndex],
 ) -> Tuple[xr.Dataset, xu.UgridDataset]:
     """ "Combines simulation data:
@@ -79,6 +97,7 @@ def get_data_from_simulations_set(
         map_data_x, his_data_x = get_data_from_simulation(
             simulations_dir=simulations_dir,
             simulation_name=simulation_name,
+            simulation_output_dir=simulation_output_dir,
             simulations_ts=simulations_ts,
             n_start=n_start,
         )
