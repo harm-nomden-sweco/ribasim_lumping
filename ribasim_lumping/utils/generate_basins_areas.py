@@ -137,6 +137,8 @@ def create_basin_areas_based_on_drainage_areas(
     print(" - define for each Ribasim-Basin the related basin area")
     if areas is None:
         return None, None
+    else:
+        areas = areas[['geometry']].copy()
     if edges is None:
         areas['basin'] = np.nan
         return areas, None
@@ -162,7 +164,7 @@ def create_basin_areas_based_on_drainage_areas(
     return areas, basin_areas
 
 
-def create_basins_based_on_basin_areas_or_edges(graph, nodes):
+def create_basins_based_on_subgraphs_and_nodes(graph, nodes):
     """create basin nodes based on basin_areas or nodes"""
     print(" - create final locations Ribasim-Basins")
     connected_components = list(nx.weakly_connected_components(graph))
@@ -180,7 +182,7 @@ def create_basins_based_on_basin_areas_or_edges(graph, nodes):
     centralities = centralities[centralities['node_id'] < 900_000_000_000]
     tmp = nodes.merge(centralities, how='outer', left_on='mesh1d_nNodes', right_on='node_id')
     tmp = tmp[tmp['basin']!=-1].sort_values(by=['basin', 'centrality'], ascending=[True, False])
-    basins = tmp.groupby(by='basin').first().reset_index()
+    basins = tmp.groupby(by='basin').first().reset_index().set_crs(nodes.crs)
     return basins
 
 
@@ -359,11 +361,10 @@ def create_basins_and_connections_using_split_nodes(
         network_graph, nodes, edges, split_nodes
     )
     split_nodes = check_if_split_node_is_used(split_nodes, nodes, edges)
-    basins = create_basins_based_on_basin_areas_or_edges(network_graph, nodes)
+    basins = create_basins_based_on_subgraphs_and_nodes(network_graph, nodes)
     areas, basin_areas = create_basin_areas_based_on_drainage_areas(edges, areas)
     boundary_conn = create_boundary_connections(boundaries, edges, basins)
     basin_connections = create_basin_connections(split_nodes, edges, nodes, basins, crs)
-    print("basins and connections created")
 
     return basin_areas, basins, areas, nodes, edges, split_nodes, \
         network_graph, basin_connections, boundary_conn

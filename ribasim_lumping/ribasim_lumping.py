@@ -23,6 +23,7 @@ from .utils.read_simulation_data_utils import (
 from .utils.generate_basins_areas import create_basins_and_connections_using_split_nodes
 from .utils.get_dhydro_network_objects import get_dhydro_network_objects
 from .utils.general_functions import find_nearest_nodes
+from .utils.generate_ribasim_model import generate_ribasim_model
 
 
 class RibasimLumpingNetwork(BaseModel):
@@ -62,10 +63,10 @@ class RibasimLumpingNetwork(BaseModel):
         super().__init__(**kwargs)
         if self.areas_gdf is not None:
             self.areas_gdf = self.areas_gdf.explode(index_parts=False)
-            if areas.crs is None:
-                areas = areas[['geometry']].set_crs(self.crs)
+            if self.areas_gdf.crs is None:
+                self.areas_gdf = self.areas_gdf[['geometry']].set_crs(self.crs)
             else:
-                areas = areas[['geometry']].to_crs(self.crs)
+                self.areas_gdf = self.areas_gdf[['geometry']].to_crs(self.crs)
 
     def add_data_from_simulations_set(
         self,
@@ -275,7 +276,16 @@ class RibasimLumpingNetwork(BaseModel):
                 self.basin_connections_gdf, self.boundary_basin_connections_gdf = results_basins
         return results_basins
 
-    # def create_connections_between_basins(self) -> Tuple[gpd.GeoDataFrame]:
+
+    def generate_ribasim_model(self):
+        ribasim_model = generate_ribasim_model(
+            basins=self.basins_gdf, 
+            split_nodes=self.split_nodes, 
+            boundaries=self.boundaries_gdf, 
+            basin_connections=self.basin_connections_gdf, 
+            boundary_basin_connections=self.boundary_basin_connections_gdf,
+            )
+        return ribasim_model
 
 
     def export_to_geopackage(
