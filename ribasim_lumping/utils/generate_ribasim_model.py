@@ -96,9 +96,12 @@ def generate_ribasim_basins(ribasim_node_gdf, dummyvalue=5.5):
             "node_id": ribasim_node_gdf.loc[ribasim_node_gdf['type']=='Basin'].index.values
         }
     )
-    profile_data['storage'] = dummyvalue
-    profile_data['area'] = dummyvalue
-    profile_data['level'] = dummyvalue
+    profile_data['area'] = 0.0
+    profile_data['level'] = 0.0
+    profile_data2 = profile_data.copy()
+    profile_data2['area'] = 1000.0
+    profile_data2['level'] = 1.0
+    profile_data = pd.concat([profile_data, profile_data2]).sort_values(by=['node_id', 'level']).reset_index(drop=True)
 
     static_data = pd.DataFrame(
         data={
