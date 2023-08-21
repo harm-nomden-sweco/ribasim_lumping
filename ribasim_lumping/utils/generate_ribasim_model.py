@@ -2,13 +2,16 @@ import geopandas as gpd
 import pandas as pd
 from typing import List, Union, Optional, Any, Tuple, Dict
 import ribasim
+from typing import Dict
 from shapely.geometry import LineString
+
 
 def generate_ribasim_nodes(
     basins: gpd.GeoDataFrame = None, 
     split_nodes: gpd.GeoDataFrame = None, 
     boundaries: gpd.GeoDataFrame = None, 
-    splitnodetypes: dict = None
+    split_node_type_conversion: Dict = None, 
+    split_node_id_conversion: Dict = None
 ) -> Tuple[gpd.GeoDataFrame]:
     """use basins, splintnodes and boundaries to generate ribasim nodes
     define splitnodetypes per nodetype or use default 
@@ -16,34 +19,40 @@ def generate_ribasim_nodes(
     returns ribasim node and boundaries, splitnodes and ribasim nodes as gdf's with ribsasim node-id column"""
     print(" - create Ribasim nodes")
     basins_gdf =basins.copy()
-    basins_gdf['node_id'] = basins_gdf['basin'] + 1
+    basins_gdf['node_id'] = basins_gdf['basin'] 
     basins_gdf['type'] = 'Basin'
 
     boundaries_gdf = boundaries.copy()
     boundaries_gdf['node_id'] = boundaries_gdf['boundary_id'] + len(basins) +1
-    boundarynodetypes = {
+    boundary_conversion = {
         'dischargebnd': 'FlowBoundary', 
         'waterlevelbnd': 'LevelBoundary'
     }
-    boundaries_gdf['type'] = boundaries_gdf['type'].replace(boundarynodetypes)
+    boundaries_gdf['type'] = boundaries_gdf['quantity'].replace(boundary_conversion)
 
     splitnodes_gdf = split_nodes.copy()
     splitnodes_gdf.insert(0, 'splitnode_id', range(len(splitnodes_gdf)))
     splitnodes_gdf['node_id'] = splitnodes_gdf['splitnode_id'] + len(basins) + len(boundaries) +1
     splitnodes_gdf['type'] = 'TabulatedRatingCurve' 
-    # TODO: DEZE TABEL OOK ALS INPUT KUNNEN GEVEN
-    if splitnodetypes == None:
-        splitnodetypes = {
-            'weir': 'TabulatedRatingCurve', 
-            'uniweir': 'TabulatedRatingCurve' ,
-            'pump': 'Pump', 
-            'weir': 'TabulatedRatingCurve', 
-            'culvert':'ManningResistance', 
-            'manual': 'ManningResistance',
-            'orifice' : 'TabulatedRatingCurve'
-        }
-    for nodetype in splitnodetypes:
-        splitnodes_gdf.loc[splitnodes_gdf['split_type']==nodetype, 'type'] = splitnodetypes[nodetype]
+
+    split_nodes_conversion = {
+        'weir': 'TabulatedRatingCurve',
+        'uniweir': 'TabulatedRatingCurve',
+        'pump': 'Pump',
+        'culvert':'ManningResistance',
+        'manual': 'ManningResistance',
+        'orifice' : 'TabulatedRatingCurve'
+    }
+    if isinstance(split_node_type_conversion, Dict):
+        for key, value in split_node_type_conversion.items():
+            split_nodes_conversion[key] = value
+    splitnodes_gdf['type'] = splitnodes_gdf['split_type'].replace(split_nodes_conversion)
+
+    if isinstance(split_node_id_conversion, Dict):
+        for key, value in split_node_id_conversion.items():
+            if len(splitnodes_gdf[splitnodes_gdf['mesh1d_node_id'] == key]) == 0:
+                print(f" * split_node type conversion id={key} (type={value}) does not exist")
+            splitnodes_gdf.loc[splitnodes_gdf['mesh1d_node_id'] == key, 'type'] = value
 
     # concat nodes
     ribasim_node_gdf = pd.concat([basins_gdf, boundaries_gdf,splitnodes_gdf]).set_crs(split_nodes.crs)
@@ -95,7 +104,7 @@ def generate_ribasim_edges(
 
     # Setup the edges:
     ribasim_edges = pd.concat([basin_connections_gdf_ds, basin_connections_gdf_us,boundary_basin_connections_us, boundary_basin_connections_ds]) 
-    ribasim_edges = ribasim_edges[['from_node_id','to_node_id','geometry']].reset_index()
+    ribasim_edges = ribasim_edges[['from_node_id','to_node_id','geometry']].reset_index(drop=True)
     ribasim_edges['from_node_id'].astype(int)
 
     if not ribasim_edges.empty:
@@ -112,16 +121,19 @@ def generate_ribasim_basins(
     print(" - create Ribasim basin")
     profile_data = pd.DataFrame(
         data={
-            "node_id": ribasim_node_gdf.loc[ribasim_node_gdf['type']=='Basin'].index.values.tolist()
+            "node_id": ribasim_node_gdf.loc[ribasim_node_gdf['type']=='Basin'].index.values
         }
     )
-    profile_data['storage'] = dummyvalue
-    profile_data['area'] = dummyvalue
-    profile_data['level'] = dummyvalue
+    profile_data['area'] = 0.0
+    profile_data['level'] = 0.0
+    profile_data2 = profile_data.copy()
+    profile_data2['area'] = 1000.0
+    profile_data2['level'] = 1.0
+    profile_data = pd.concat([profile_data, profile_data2]).sort_values(by=['node_id', 'level']).reset_index(drop=True)
 
     static_data = pd.DataFrame(
         data={
-            "node_id": ribasim_node_gdf.loc[ribasim_node_gdf['type']=='Basin'].index.values.tolist()
+            "node_id": ribasim_node_gdf.loc[ribasim_node_gdf['type']=='Basin'].index.values
         }
     )
     static_data['drainage'] = dummyvalue
@@ -249,13 +261,14 @@ def generate_ribasimmodel(
     boundaries = None, 
     basin_connections = None, 
     boundary_basin_connections = None, 
-    splitnodetypes = None
+    split_node_type_conversion = None, 
+    split_node_id_conversion = None
 ):
-    #TODO add hints 
     """generate ribasim model from ribasim nodes and edges and
     optional input; ribasim basins, level boundary, flow_boundary, pump, tabulated rating curve and manning resistance """
     print("Generate ribasim model:")
-    node, boundaries_gdf, splitnodes_gdf, ribasim_node_gdf = generate_ribasim_nodes(basins, split_nodes, boundaries, splitnodetypes)
+    node, boundaries_gdf, splitnodes_gdf, ribasim_node_gdf = \
+        generate_ribasim_nodes(basins, split_nodes, boundaries, split_node_type_conversion, split_node_id_conversion)
     edge = generate_ribasim_edges(basins, splitnodes_gdf, basin_connections, boundary_basin_connections)
     basin = generate_ribasim_basins(ribasim_node_gdf, dummyvalue=5.5)
     level_boundary = generate_ribasim_level_boundaries(boundaries_gdf)

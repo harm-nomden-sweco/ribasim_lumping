@@ -6,7 +6,7 @@ from .general_functions import create_objects_gdf
 import hydrolib.core.dflowfm as hcdfm
 
 
-def get_dhydro_network_objects(map_data, his_data, crs, file_bc):
+def get_dhydro_network_objects(map_data, his_data, boundary_data, crs):
     """Extracts nodes, edges, confluences, bifurcations, weirs, pumps, laterals from his/map"""
     if map_data is None:
         raise ValueError("D-Hydro simulation map-data is not read")
@@ -24,7 +24,7 @@ def get_dhydro_network_objects(map_data, his_data, crs, file_bc):
     uniweirs = get_uniweirs_dhydro_network(his_data, edges, crs)
     confluences = get_confluences_dhydro_network(nodes, edges)
     bifurcations = get_bifurcations_dhydro_network(nodes, edges)
-    boundaries = get_boundaries(file_bc, nodes)
+    boundaries = get_boundaries(boundary_data, nodes)
     return nodes, nodes_h, edges, edges_q, stations, pumps, weirs, \
         orifices, bridges, culverts, uniweirs, confluences, bifurcations, boundaries
 
@@ -200,17 +200,17 @@ def get_bifurcations_dhydro_network(nodes_gdf, edges_gdf) -> gpd.GeoDataFrame:
     bifurcations_gdf.object_type = 'bifurcation'
     return bifurcations_gdf
 
-
-def get_boundaries(file_bc, nodes):
+def get_boundaries(
+    boundary_data: gpd.GeoDataFrame = None,
+    nodes: gpd.GeoDataFrame = None
+) -> gpd.GeoDataFrame:
+    """merge boundary data with nodes
+    returns: geodataframe with boundaries"""
     print(" / boundaries")
-    forcingmodel_object = hcdfm.ForcingModel(file_bc)
-    bc = pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])
+    boundary_data = list(boundary_data.values())[0]
 
-    # convert dictionary with boundary type to columns
-    bc = pd.concat([bc.drop(['quantityunitpair'], axis=1), pd.DataFrame.from_records(bc['quantityunitpair'])[0].apply(pd.Series)], axis=1)
-
-    # merge boundary with nodes
-    boundaries_gdf = nodes.merge(bc, left_on = 'mesh1d_node_id', right_on = 'name')
+    # merge boundary data with nodes
+    boundaries_gdf = nodes.merge(boundary_data, left_on = 'mesh1d_node_id', right_on = 'name')
     boundaries_gdf = boundaries_gdf.drop(columns=['offset','factor','vertpositionindex','name', 'comments','datablock'])
     boundaries_gdf.insert(0, 'boundary_id', range(len(boundaries_gdf)))
     if boundaries_gdf.empty:

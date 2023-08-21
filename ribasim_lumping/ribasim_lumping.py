@@ -14,6 +14,7 @@ import dfm_tools as dfmt
 import xarray as xr
 import xugrid as xu
 import networkx as nx
+import ribasim
 
 from .utils.read_simulation_data_utils import (
     get_data_from_simulations_set,
@@ -30,10 +31,12 @@ class RibasimLumpingNetwork(BaseModel):
     """class to select datapoints from different simulations at certain timestamps"""
 
     name: str
+    dhydro_dir: Path
     results_dir: Path
     areas_gdf: gpd.GeoDataFrame = None
     his_data: xu.UgridDataset = None
     map_data: xu.UgridDataset = None
+    boundary_data: Dict = None
     edges_gdf: gpd.GeoDataFrame = None
     nodes_gdf: gpd.GeoDataFrame = None
     edges_q_df: pd.DataFrame = None
@@ -54,6 +57,9 @@ class RibasimLumpingNetwork(BaseModel):
     basin_connections_gdf: gpd.GeoDataFrame = None
     boundaries_gdf: gpd.GeoDataFrame = None
     boundary_basin_connections_gdf: gpd.GeoDataFrame = None
+    split_node_type_conversion: Dict = None
+    split_node_id_conversion: Dict = None
+    ribasim_model: ribasim.Model = None
     crs: int = 28992
 
     class Config:
@@ -87,7 +93,7 @@ class RibasimLumpingNetwork(BaseModel):
                 )
             self.simulation_names = get_simulation_names_from_dir(simulations_dir)
 
-        his_data, map_data = get_data_from_simulations_set(
+        his_data, map_data, boundary_data = get_data_from_simulations_set(
             set_name=set_name,
             simulations_dir=simulations_dir,
             simulations_names=simulations_names,
@@ -95,15 +101,18 @@ class RibasimLumpingNetwork(BaseModel):
             simulations_ts=simulations_ts,
         )
         self.his_data = combine_data_from_simulations_sets(self.his_data, his_data)
-        self.map_data = combine_data_from_simulations_sets(
-            self.map_data, map_data, xugrid=True
-        )
-        return self.his_data, self.map_data
+        self.map_data = combine_data_from_simulations_sets(self.map_data, map_data, xugrid=True)
+
+        if self.boundary_data is None:
+            self.boundary_data = {f'{set_name}': boundary_data}
+        else:
+            self.boundary_data[set_name] = boundary_data
+        return self.his_data, self.map_data, self.boundary_data
 
 
-    def get_network_data(self, file_bc):
+    def get_network_data(self):
         """Extracts nodes, edges, confluences, bifurcations, weirs, pumps from his/map"""
-        results = get_dhydro_network_objects(self.map_data, self.his_data, self.crs, file_bc)
+        results = get_dhydro_network_objects(self.map_data, self.his_data, self.boundary_data, self.crs)
 
         self.nodes_gdf, self.nodes_h_df, self.edges_gdf, self.edges_q_df, \
             self.stations_gdf, self.pumps_gdf, self.weirs_gdf, self.orifices_gdf, \
@@ -210,7 +219,7 @@ class RibasimLumpingNetwork(BaseModel):
         nodes_to_include = self.nodes_gdf[
             self.nodes_gdf.mesh1d_nNodes.isin(node_ids_to_include)
         ].reset_index(drop=True)
-        nodes_to_include['object_type'] = 'node'
+        nodes_to_include['object_type'] = 'manual'
         nodes_to_include['projection_x'] = nodes_to_include.geometry.x
         nodes_to_include['projection_y'] = nodes_to_include.geometry.y
         # combine split_nodes
@@ -281,15 +290,20 @@ class RibasimLumpingNetwork(BaseModel):
         return results_basins
 
 
-    def generate_ribasim_model(self, splitnodetypes_dict: dict = None):
+    def generate_ribasim_model(self, split_node_type_conversion: Dict = None, split_node_id_conversion: Dict = None):
+        self.split_node_type_conversion = split_node_type_conversion
+        self.split_node_id_conversion = split_node_id_conversion
+
         ribasim_model = generate_ribasimmodel(
             basins=self.basins_gdf, 
             split_nodes=self.split_nodes, 
             boundaries=self.boundaries_gdf, 
             basin_connections=self.basin_connections_gdf, 
             boundary_basin_connections=self.boundary_basin_connections_gdf,
-            splitnodetypes = splitnodetypes_dict,
-            )
+            split_node_type_conversion=split_node_type_conversion, 
+            split_node_id_conversion=split_node_id_conversion
+        )
+        self.ribasim_model = ribasim_model
         return ribasim_model
 
 

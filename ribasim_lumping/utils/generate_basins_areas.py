@@ -91,8 +91,8 @@ def add_basin_code_from_network_to_nodes_and_edges(
             edges["start_node_no"].isin(node_ids) & 
             edges["end_node_no"].isin(node_ids),
             "basin",
-        ] = i
-        nodes.loc[nodes["mesh1d_nNodes"].isin(list(subgraph)), "basin"] = i
+        ] = i+1
+        nodes.loc[nodes["mesh1d_nNodes"].isin(list(subgraph)), "basin"] = i+1
     return nodes, edges
 
 
@@ -195,7 +195,6 @@ def create_basin_connections(
     ) -> gpd.GeoDataFrame:
     """create basin connections"""
     print(" - create Ribasim-Edges between Basins and split locations")
-
     conn = (split_nodes[['mesh1d_nNodes','geometry', 'split_type', 'mesh1d_node_id', 'mesh1d_nEdges']]
             .rename(columns={"geometry":"geom_split_node"}))
     # check if split_node is used (split_type)

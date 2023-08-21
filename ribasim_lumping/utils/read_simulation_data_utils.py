@@ -8,6 +8,7 @@ import numpy as np
 import dfm_tools as dfmt
 import xarray as xr
 import xugrid as xu
+import hydrolib.core.dflowfm as hcdfm
 
 
 def get_simulation_names_from_dir(path_dir=None) -> List[str]:
@@ -72,7 +73,6 @@ def get_data_from_simulation(
     map_data.coords["condition"] = np.arange(n_start, n_start + len(map_data.condition))
     return map_data, his_data
 
-
 def get_data_from_simulations_set(
     set_name: str,
     simulations_dir: Path,
@@ -85,7 +85,7 @@ def get_data_from_simulations_set(
     - from simulation folder (dir)
     - at predefined timestamps (ts)
     - replaces simulation timestamp with condition (int)
-    Returns: map_data (edges/nodes) and his_data (structures), all simulations combined
+    Returns: map_data (edges/nodes), his_data (structures) and boundary data, all simulations combined 
     """
     his_data = None
     map_data = None
@@ -114,7 +114,20 @@ def get_data_from_simulations_set(
             if "condition" in var.dims:
                 his_data[var_name] = var.expand_dims(set=[set_name])
         n_start = len(his_data.condition)
-    return his_data, map_data
+    
+    # get boundary1dconditions data from simulation
+    boundary_data = None
+    for root, dirs, files in os.walk(simulations_dir/simulations_names[0]):
+        for file in files:
+            if file.endswith("boundaryconditions1d.bc"):
+                filepath = root + os.sep + file
+                forcingmodel_object = hcdfm.ForcingModel(filepath)
+                boundary_data = pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])
+                # convert dictionary with boundary type to columns
+                boundary_data = pd.concat([boundary_data.drop(['quantityunitpair'], axis=1), pd.DataFrame.from_records(boundary_data['quantityunitpair'])[0].apply(pd.Series)], axis=1)
+    if boundary_data is None:
+        print(" * simulation does not contain boundary file (ending with 'boundaryconditions1d.bc'")
+    return his_data, map_data, boundary_data
 
 
 def combine_data_from_simulations_sets(
