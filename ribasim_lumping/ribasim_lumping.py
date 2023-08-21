@@ -23,7 +23,7 @@ from .utils.read_simulation_data_utils import (
 from .utils.generate_basins_areas import create_basins_and_connections_using_split_nodes
 from .utils.get_dhydro_network_objects import get_dhydro_network_objects
 from .utils.general_functions import find_nearest_nodes
-from .utils.generate_ribasim_model import generate_ribasim_model
+from .utils.generate_ribasim_model import generate_ribasimmodel
 
 
 class RibasimLumpingNetwork(BaseModel):
@@ -176,6 +176,10 @@ class RibasimLumpingNetwork(BaseModel):
         node_ids_to_include: List[int] = [],
         node_ids_to_exclude: List[int] = [],
     ) -> gpd.GeoDataFrame:
+        """receive node id's of splitnodes 
+        by choosing which structures to use as splitnodes locations 
+        and including or excluding specific nodes as splitnode
+        returns splitnodes"""
         # get split_nodes based on type
         split_nodes_structures = self.get_split_nodes_based_on_type(
             bifurcations=bifurcations,
@@ -277,13 +281,14 @@ class RibasimLumpingNetwork(BaseModel):
         return results_basins
 
 
-    def generate_ribasim_model(self):
-        ribasim_model = generate_ribasim_model(
+    def generate_ribasim_model(self, splitnodetypes_dict: dict = None):
+        ribasim_model = generate_ribasimmodel(
             basins=self.basins_gdf, 
             split_nodes=self.split_nodes, 
             boundaries=self.boundaries_gdf, 
             basin_connections=self.basin_connections_gdf, 
             boundary_basin_connections=self.boundary_basin_connections_gdf,
+            splitnodetypes = splitnodetypes_dict,
             )
         return ribasim_model
 
