@@ -22,17 +22,22 @@ def generate_ribasim_nodes(
     basins_gdf['node_id'] = basins_gdf['basin'] 
     basins_gdf['type'] = 'Basin'
 
-    boundaries_gdf = boundaries.copy()
-    boundaries_gdf['node_id'] = boundaries_gdf['boundary_id'] + len(basins) +1
-    boundary_conversion = {
-        'dischargebnd': 'FlowBoundary', 
-        'waterlevelbnd': 'LevelBoundary'
-    }
-    boundaries_gdf['type'] = boundaries_gdf['quantity'].replace(boundary_conversion)
+    if boundaries is None:
+        boundaries_gdf = None
+        len_boundaries = 0
+    else:
+        boundaries_gdf = boundaries.copy()
+        boundaries_gdf['node_id'] = boundaries_gdf['boundary_id'] + len(basins) +1
+        boundary_conversion = {
+            'dischargebnd': 'FlowBoundary', 
+            'waterlevelbnd': 'LevelBoundary'
+        }
+        boundaries_gdf['type'] = boundaries_gdf['quantity'].replace(boundary_conversion)
+        len_boundaries = len(boundaries)
 
     splitnodes_gdf = split_nodes.copy()
     splitnodes_gdf.insert(0, 'splitnode_id', range(len(splitnodes_gdf)))
-    splitnodes_gdf['node_id'] = splitnodes_gdf['splitnode_id'] + len(basins) + len(boundaries) +1
+    splitnodes_gdf['node_id'] = splitnodes_gdf['splitnode_id'] + len(basins) + len_boundaries +1
     splitnodes_gdf['type'] = 'TabulatedRatingCurve' 
 
     split_nodes_conversion = {
@@ -66,6 +71,7 @@ def generate_ribasim_nodes(
     
     return node, boundaries_gdf, splitnodes_gdf, ribasim_node_gdf
 
+
 def generate_ribasim_edges(
     basins: gpd.GeoDataFrame = None, 
     split_nodes_gdf: gpd.GeoDataFrame = None, 
@@ -91,19 +97,23 @@ def generate_ribasim_edges(
     basin_connections_gdf_ds['from_node_id'] = basin_connections_gdf_ds['node_id']
     basin_connections_gdf_ds['to_node_id'] = basin_connections_gdf_ds['basin_in'] + 1
 
-    # boundary basin connections - add node ID's
-    boundary_basin_connections = boundary_basin_connections[['boundary_id', 'basin','geometry','boundary_location']].copy()
+    # boundary basin connections - add node ID's`
+    if boundary_basin_connections is None:
+        boundary_basin_connections_ds = pd.DataFrame()
+        boundary_basin_connections_us = pd.DataFrame()
+    else:
+        boundary_basin_connections = boundary_basin_connections[['boundary_id', 'basin','geometry','boundary_location']].copy()
 
-    boundary_basin_connections_us = boundary_basin_connections.loc[boundary_basin_connections['boundary_location'] == 'upstream'].copy()
-    boundary_basin_connections_us['from_node_id'] = boundary_basin_connections_us['boundary_id']  + len(basins) +1
-    boundary_basin_connections_us['to_node_id'] = boundary_basin_connections_us['basin'] + 1
+        boundary_basin_connections_us = boundary_basin_connections.loc[boundary_basin_connections['boundary_location'] == 'upstream'].copy()
+        boundary_basin_connections_us['from_node_id'] = boundary_basin_connections_us['boundary_id']  + len(basins) +1
+        boundary_basin_connections_us['to_node_id'] = boundary_basin_connections_us['basin'] + 1
 
-    boundary_basin_connections_ds = boundary_basin_connections.loc[boundary_basin_connections['boundary_location'] == 'downstream'].copy()
-    boundary_basin_connections_ds['from_node_id'] = boundary_basin_connections_ds['basin'] + 1
-    boundary_basin_connections_ds['to_node_id'] = boundary_basin_connections_ds['boundary_id'] + len(basins) + 1
+        boundary_basin_connections_ds = boundary_basin_connections.loc[boundary_basin_connections['boundary_location'] == 'downstream'].copy()
+        boundary_basin_connections_ds['from_node_id'] = boundary_basin_connections_ds['basin'] + 1
+        boundary_basin_connections_ds['to_node_id'] = boundary_basin_connections_ds['boundary_id'] + len(basins) + 1
 
     # Setup the edges:
-    ribasim_edges = pd.concat([basin_connections_gdf_ds, basin_connections_gdf_us,boundary_basin_connections_us, boundary_basin_connections_ds]) 
+    ribasim_edges = pd.concat([basin_connections_gdf_ds, basin_connections_gdf_us, boundary_basin_connections_us, boundary_basin_connections_ds]) 
     ribasim_edges = ribasim_edges[['from_node_id','to_node_id','geometry']].reset_index(drop=True)
     ribasim_edges['from_node_id'].astype(int)
 
@@ -112,6 +122,7 @@ def generate_ribasim_edges(
     else:
         edge=None
     return edge
+
 
 def generate_ribasim_basins(
     ribasim_node_gdf: gpd.GeoDataFrame = None, 
@@ -124,9 +135,11 @@ def generate_ribasim_basins(
             "node_id": ribasim_node_gdf.loc[ribasim_node_gdf['type']=='Basin'].index.values
         }
     )
+    profile_data['storage'] = 0.0
     profile_data['area'] = 0.0
     profile_data['level'] = 0.0
     profile_data2 = profile_data.copy()
+    profile_data['storage'] = 1000.0
     profile_data2['area'] = 1000.0
     profile_data2['level'] = 1.0
     profile_data = pd.concat([profile_data, profile_data2]).sort_values(by=['node_id', 'level']).reset_index(drop=True)
@@ -149,6 +162,7 @@ def generate_ribasim_basins(
         basin=None
         print("  - no basins")
     return basin
+
 
 def generate_ribasium_tabulatedratingcurves(
     ribasim_node_gdf: gpd.GeoDataFrame = None,
@@ -179,6 +193,10 @@ def generate_ribasim_level_boundaries(
 ):
     """generate ribasim level boundaries for all level boundary nodes using dummyvalue as level"""
     print(" - create Ribasim level boundaries")
+    if boundaries_gdf is None:
+        print("  - no level boundaries")
+        return None
+    
     static_boundary = pd.DataFrame(
         data={
             "node_id": boundaries_gdf.loc[boundaries_gdf['quantity']=='waterlevelbnd']['node_id']
@@ -186,12 +204,13 @@ def generate_ribasim_level_boundaries(
     )
     static_boundary['level'] = dummyvalue
 
-    if not static_boundary.empty:
-        level_boundary = ribasim.LevelBoundary(static=static_boundary)
-    else:
+    if static_boundary.empty:
         level_boundary=None
         print("  - no level boundaries")
+    else:
+        level_boundary = ribasim.LevelBoundary(static=static_boundary)
     return level_boundary
+
 
 def generate_ribasim_flow_boundaries(
     boundaries_gdf: gpd.GeoDataFrame = None,
@@ -199,6 +218,10 @@ def generate_ribasim_flow_boundaries(
 ):
     """generate ribasim flow boundaries for all flow boundary nodes using dummyvalue as flow_rate"""
     print(" - create Ribasim flow boundaries")
+    if boundaries_gdf is None:
+        print("  - no flow boundaries")
+        return None
+
     static_boundary = pd.DataFrame(
         data={
             "node_id": boundaries_gdf.loc[boundaries_gdf['quantity']=='dischargebnd']['node_id']
@@ -206,13 +229,13 @@ def generate_ribasim_flow_boundaries(
     )
     static_boundary['flow_rate'] = dummyvalue
 
-    if not static_boundary.empty:
-        flow_boundary = ribasim.FlowBoundary(static=static_boundary)
-    else:
+    if static_boundary.empty:
         flow_boundary=None
         print("  - no flow boundaries")
-    
+    else:
+        flow_boundary = ribasim.FlowBoundary(static=static_boundary)
     return flow_boundary
+
 
 def generate_ribasim_pumps(ribasim_node_gdf: gpd.GeoDataFrame = None):
     """generate ribasim pumps for all pump nodes""" 
@@ -230,6 +253,7 @@ def generate_ribasim_pumps(ribasim_node_gdf: gpd.GeoDataFrame = None):
         pump=None
         print("  - no pumps")
     return pump
+
 
 def generate_ribasim_manningresistances(
     ribasim_node_gdf: gpd.GeoDataFrame = None,
@@ -254,6 +278,7 @@ def generate_ribasim_manningresistances(
         manning_resistance=None
         print("  - no manning resistances")
     return manning_resistance
+
 
 def generate_ribasimmodel(
     basins = None, 
