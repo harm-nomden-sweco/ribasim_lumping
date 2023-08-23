@@ -1,6 +1,6 @@
 # ribasim_lumping
 
-This python package is used to develop a aggregated Ribasim network. It has been developed by Sweco (Harm Nomden and Tessa Andringa) when working on the TKI-project (programme NHI) on the development, application and testing of the new Ribasim-model (Deltares, https://github.com/Deltares/Ribasim). 
+This Python package is used to develop an aggregated Ribasim network. It was developed by Sweco (Harm Nomden and Tessa Andringa) when working on the TKI-project (program NHI) on the development, application, and testing of the new Ribasim model (Deltares, https://github.com/Deltares/Ribasim). 
 
 ### Objective
 It translates a D-Hydro network into an aggregated Ribasim-network. The detailed D-Hydro network is divided into 'basins' based on locations provided by the user where the network should be split. On these split-locations nodes are placed which define the exchange flow between the basins.
