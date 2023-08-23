@@ -1,4 +1,4 @@
-# ribasim-generator
+# ribasim-modelgenerator-sweco
 
 This python package is used to develop an aggregated Ribasim network. It was developed by Sweco (Harm Nomden and Tessa Andringa) when working on the TKI-project (programme NHI) on the development, application, and testing of the new Ribasim-model (Deltares, https://github.com/Deltares/Ribasim). 
 
