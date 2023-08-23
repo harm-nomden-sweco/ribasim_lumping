@@ -11,6 +11,9 @@ Most important dependencies:
 - UGRID (https://github.com/Deltares/UGridPy)
 - XUGRID (https://github.com/Deltares/xugrid)
 
+### Installation
+We will make this package accessible via pypi. It is recommended to clone this repository because it is under development and it includes some example notebooks.
+
 ### Licences
 This package is developed under the MIT license. Reference to this package: Ribasim-Lumping (Sweco, 2023).
 
