@@ -1,6 +1,6 @@
 # ribasim-lumping
 
-This python package is used to develop an aggregated Ribasim network (Deltares, https://github.com/Deltares/Ribasim). 
+This python package is used to develop an aggregated Ribasim network (Deltares, https://github.com/Deltares/Ribasim). Documentation: https://deltares.github.io/Ribasim/
 
 ### Objective
 It translates a D-Hydro network into an aggregated Ribasim-network. The detailed D-Hydro network is divided into 'basins' based on locations provided by the user where the network should be split. On these split-locations nodes are placed which define the exchange flow between the basins.
