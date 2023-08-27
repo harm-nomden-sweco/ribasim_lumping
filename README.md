@@ -3,7 +3,7 @@
 This python package is used to develop an aggregated Ribasim network (Deltares, https://github.com/Deltares/Ribasim). Documentation: https://deltares.github.io/Ribasim/
 
 ### Objective
-This python-package provides functions to translate a D-Hydro network into a simplified (aggregated/lumped) Ribasim-network. The user provides a list of locations where the network can be split, resulting into sub-networks and separate 'basins'. On these split-locations nodes are placed with definitions about the exchange flow between the basins.
+This python-package provides functions to translate a D-Hydro network into a simplified (aggregated/lumped) Ribasim-network. The user provides a list of locations where the network can be split, resulting into sub-networks which are called 'basins'. Exchange between basins takes place via the split-nodes.
 
 ### Dependencies
 Most important dependencies:
