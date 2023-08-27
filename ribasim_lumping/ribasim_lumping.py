@@ -22,7 +22,7 @@ from .utils.read_simulation_data_utils import (
     combine_data_from_simulations_sets,
 )
 from .utils.generate_basins_areas import create_basins_and_connections_using_split_nodes
-from .utils.get_dhydro_network_objects import get_dhydro_network_objects
+from .utils.read_dhydro_network_objects import get_dhydro_network_objects
 from .utils.general_functions import find_nearest_nodes
 from .utils.generate_ribasim_model import generate_ribasimmodel
 
@@ -120,7 +120,7 @@ class RibasimLumpingNetwork(BaseModel):
             self.confluences_gdf, self.bifurcations_gdf, self.boundaries_gdf = results
 
 
-    def get_qh_relation_node_edge(self, node_no:int, edge_no:int, set:str=None):
+    def get_qh_relation_node_edge(self, node_no: int, edge_no: int, set: str = None):
         h_x = self.nodes_h_df.loc[node_no]
         q_x = self.edges_q_df.loc[edge_no]
         qh_x = q_x.merge(h_x, how='outer', left_index=True, right_index=True)
@@ -180,10 +180,13 @@ class RibasimLumpingNetwork(BaseModel):
         bridges: bool = False,
         culverts: bool = False,
         uniweirs: bool = False,
+        edges: bool = False,
         structures_ids_to_include: List[int] = [],
         structures_ids_to_exclude: List[int] = [],
         node_ids_to_include: List[int] = [],
         node_ids_to_exclude: List[int] = [],
+        edge_ids_to_include: List[int] = [],
+        edge_ids_to_exclude: List[int] = [],
     ) -> gpd.GeoDataFrame:
         """receive node id's of splitnodes 
         by choosing which structures to use as splitnodes locations 
@@ -230,6 +233,26 @@ class RibasimLumpingNetwork(BaseModel):
         ]
         # drop duplicates
         split_nodes = split_nodes.drop_duplicates()
+
+        # include/exclude edge centers
+        if edges or len(edge_ids_to_include) > 1:
+            if edges:
+                additional_split_nodes = self.edges_gdf.copy()
+                if len(edge_ids_to_exclude):
+                    additional_split_nodes[
+                        ~additional_split_nodes.mesh1d_nEdges.isin(edge_ids_to_exclude)
+                    ]
+            elif len(edge_ids_to_include):
+                additional_split_nodes = self.edges_gdf[self.edges_gdf.mesh1d_nEdges.isin(edge_ids_to_include)]
+            additional_split_nodes.geometry = additional_split_nodes.geometry.apply(lambda g: g.centroid)
+            additional_split_nodes['object_type'] = 'edge'
+            additional_split_nodes['mesh1d_nNodes'] = -1
+            additional_split_nodes = additional_split_nodes.rename(columns={"mesh1d_edge_x": "projection_x", "mesh1d_edge_y": "projection_y"})
+            additional_split_nodes = additional_split_nodes.drop(['start_node_no', 'end_node_no', 'basin'], axis=1, errors='ignore')
+
+            split_nodes = pd.concat([split_nodes, additional_split_nodes])
+            split_nodes = split_nodes.drop_duplicates(subset='mesh1d_nEdges', keep="first")
+
         # check whether all split_node_ids are present in list
         missing = list(set(node_ids_to_include).difference(
             split_nodes.mesh1d_nNodes.values
@@ -247,7 +270,8 @@ class RibasimLumpingNetwork(BaseModel):
 
 
     def add_split_nodes_based_on_locations(
-        self, split_nodes: gpd.GeoDataFrame
+        self, 
+        split_nodes: gpd.GeoDataFrame
     ) -> gpd.GeoDataFrame:
         """add split_node_ids using geodataframe (shapefile/geojson)"""
         nearest_node_ids = find_nearest_nodes(
@@ -290,7 +314,11 @@ class RibasimLumpingNetwork(BaseModel):
         return results_basins
 
 
-    def generate_ribasim_model(self, split_node_type_conversion: Dict = None, split_node_id_conversion: Dict = None):
+    def generate_ribasim_model(
+            self, 
+            split_node_type_conversion: Dict = None, 
+            split_node_id_conversion: Dict = None
+        ):
         self.split_node_type_conversion = split_node_type_conversion
         self.split_node_id_conversion = split_node_id_conversion
 
@@ -365,4 +393,9 @@ class RibasimLumpingNetwork(BaseModel):
             shutil.copy(qgz_path_stored, qgz_path)
         print("")
         print(f'Export location: {qgz_path}')
+
+
+def create_ribasim_lumping_network(**kwargs):
+    return RibasimLumpingNetwork(**kwargs)
+
 

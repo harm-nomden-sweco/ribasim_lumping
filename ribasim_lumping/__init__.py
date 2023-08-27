@@ -1,1 +1,1 @@
-from .ribasim_lumping import RibasimLumpingNetwork
+from .ribasim_lumping import create_ribasim_lumping_network

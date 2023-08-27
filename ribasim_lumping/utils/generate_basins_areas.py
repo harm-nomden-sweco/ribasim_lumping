@@ -210,6 +210,7 @@ def create_basin_connections(
         left_on='mesh1d_nEdges', 
         right_on='mesh1d_nEdges'
     )
+    # TODO: check for each edge the maximum absolute flow direction, in case of negative, reverse start_node_no/end_node_no
     # merge with node to find us and ds basin
     conn_struct_us = conn_struct.merge(
         nodes,
@@ -239,9 +240,12 @@ def create_basin_connections(
         right_on='end_node_no'
     )
 
+    # TODO: check for each edge the maximum absolute flow direction, in case of negative, cut and past in other dataframe.
+
     # Combine (1) en (2)
     conn_ds = pd.concat([conn_nodes_ds, conn_struct_ds])
     conn_us = pd.concat([conn_nodes_us, conn_struct_us])
+
     # merge splitnodes with basin DOWNSTREAM
     conn_ds = conn_ds.merge(
         basins[['basin', 'geometry']], 
@@ -256,48 +260,84 @@ def create_basin_connections(
         right_on='basin'
     ).rename(columns={"geometry": "geom_basin"})
     conn_us['side'] = 'upstream'
+
+    conn_ds_edge = conn_ds[conn_ds.split_type == 'edge'].copy()
+    conn_us_edge = conn_us[conn_us.split_type == 'edge'].copy()
+
     # merge up- and downstream
-    conn_gdf = conn_us.merge(
-        conn_ds, 
+    conn_edge_gdf = conn_us_edge.merge(
+        conn_ds_edge, 
+        left_on='mesh1d_nEdges',
+        right_on='mesh1d_nEdges',
+        suffixes=('_out','_in')
+    )
+    conn_edge_gdf = conn_edge_gdf[[
+        'split_type_out', 'mesh1d_nEdges', 'basin_out', 'basin_in',
+        'geom_basin_out', 'geom_split_node_out', 'geom_basin_in'
+    ]]
+    # draw connection line via split node
+    if conn_edge_gdf.empty:
+        conn_edge_gdf['geometry'] = np.nan
+    else:
+        conn_edge_gdf['geometry'] = conn_edge_gdf.apply(
+            lambda row: LineString([row['geom_basin_out'], row['geom_split_node_out'], row['geom_basin_in']]), 
+            axis=1
+        )
+    conn_edge_gdf = gpd.GeoDataFrame(conn_edge_gdf, geometry='geometry', crs=crs)
+    conn_edge_gdf['mesh1d_node_id'] = -1
+    
+    conn_ds_node = conn_ds[conn_ds.split_type != 'edge'].copy()
+    conn_us_node = conn_us[conn_us.split_type != 'edge'].copy()
+
+    # merge up- and downstream
+    conn_node_gdf = conn_us_node.merge(
+        conn_ds_node, 
         left_on='mesh1d_node_id',
         right_on='mesh1d_node_id',
         suffixes=('_out','_in')
     )
-    conn_gdf = conn_gdf[[
+    conn_node_gdf = conn_node_gdf[[
         'split_type_out', 'mesh1d_node_id', 'basin_out', 'basin_in',
         'geom_basin_out', 'geom_split_node_out', 'geom_basin_in'
     ]]
     # draw connection line via split node
-    conn_gdf['geometry'] = conn_gdf.apply(
-        lambda row: LineString([row['geom_basin_out'], row['geom_split_node_out'], row['geom_basin_in']]), 
-        axis=1
-    )
-    conn_gdf = gpd.GeoDataFrame(conn_gdf, geometry='geometry', crs=crs)
-    basin_connections_gdf = conn_gdf.drop(columns=['geom_basin_in','geom_basin_out','geom_split_node_out'])
+    if conn_node_gdf.empty:
+        conn_node_gdf['geometry'] = np.nan
+    else:
+        conn_node_gdf['geometry'] = conn_node_gdf.apply(
+            lambda row: LineString([row['geom_basin_out'], row['geom_split_node_out'], row['geom_basin_in']]), 
+            axis=1
+        )
+    conn_node_gdf = gpd.GeoDataFrame(conn_node_gdf, geometry='geometry', crs=crs)
+    conn_node_gdf['mesh1d_nEdges'] = -1
+
+    basin_connections_gdf = pd.concat([conn_edge_gdf, conn_node_gdf])
+    
+    basin_connections_gdf = basin_connections_gdf.drop(columns=['geom_basin_in','geom_basin_out','geom_split_node_out'])
     return basin_connections_gdf
 
 
 def create_boundary_connections(
         boundaries: gpd.GeoDataFrame, 
-        edges: gpd.GeoDataFrame, 
+        nodes: gpd.GeoDataFrame, 
         basins: gpd.GeoDataFrame,
     ) -> gpd.GeoDataFrame:
     """create boundary-basin connections"""
     print(" - create Ribasim-Edges between Boundary and Basin")
-    if boundaries is None or edges is None or basins is None:
+    if boundaries is None or nodes is None or basins is None:
         return None
 
     # merge boundaries with edges 
     boundary_conn = boundaries.rename(columns={"geometry":"geometry_boundary"})
     boundary_conn_us = boundary_conn.merge(
-        edges[['start_node_no', 'end_node_no','mesh1d_nEdges', 'basin']], 
+        nodes[['mesh1d_nNodes', 'basin']], 
         left_on='mesh1d_nNodes', 
-        right_on='start_node_no'
+        right_on='mesh1d_nNodes'
     )
     boundary_conn_ds = boundary_conn.merge(
-        edges[['start_node_no','end_node_no','mesh1d_nEdges', 'basin']], 
+        nodes[['mesh1d_nNodes', 'basin']], 
         left_on='mesh1d_nNodes', 
-        right_on='end_node_no'
+        right_on='mesh1d_nNodes'
     )
 
     # merge with basins for geometry
@@ -362,7 +402,7 @@ def create_basins_and_connections_using_split_nodes(
     split_nodes = check_if_split_node_is_used(split_nodes, nodes, edges)
     basins = create_basins_based_on_subgraphs_and_nodes(network_graph, nodes)
     areas, basin_areas = create_basin_areas_based_on_drainage_areas(edges, areas)
-    boundary_conn = create_boundary_connections(boundaries, edges, basins)
+    boundary_conn = create_boundary_connections(boundaries, nodes, basins)
     basin_connections = create_basin_connections(split_nodes, edges, nodes, basins, crs)
 
     return basin_areas, basins, areas, nodes, edges, split_nodes, \

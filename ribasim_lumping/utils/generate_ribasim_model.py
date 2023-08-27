@@ -83,7 +83,11 @@ def generate_ribasim_edges(
     basin_connections_gdf = basin_connections[['mesh1d_node_id', 'basin_in','basin_out','geometry']]
 
     # merge to find splitnode id
-    basin_connections_gdf = basin_connections_gdf.merge(split_nodes_gdf[['splitnode_id','mesh1d_node_id', 'node_id']], left_on='mesh1d_node_id', right_on='mesh1d_node_id')
+    basin_connections_gdf = basin_connections_gdf.merge(
+        split_nodes_gdf[['splitnode_id','mesh1d_node_id', 'node_id']], 
+        left_on='mesh1d_node_id', 
+        right_on='mesh1d_node_id'
+    )
 
     # split connections in the connections upstream and downstream of splitnode
     # add node ID's 
@@ -160,7 +164,7 @@ def generate_ribasim_basins(
         basin = ribasim.Basin(profile=profile_data, static=static_data)
     else:
         basin=None
-        print("  - no basins")
+        print("   x no basins")
     return basin
 
 
@@ -182,7 +186,7 @@ def generate_ribasium_tabulatedratingcurves(
         tabulated_rating_curve = ribasim.TabulatedRatingCurve(static=static_data)
     else:
         tabulated_rating_curve=None
-        print("  - no tabulated rating curves")
+        print("   x no tabulated rating curves")
     
     return tabulated_rating_curve
 
@@ -194,7 +198,7 @@ def generate_ribasim_level_boundaries(
     """generate ribasim level boundaries for all level boundary nodes using dummyvalue as level"""
     print(" - create Ribasim level boundaries")
     if boundaries_gdf is None:
-        print("  - no level boundaries")
+        print("   x no level boundaries")
         return None
     
     static_boundary = pd.DataFrame(
@@ -206,7 +210,7 @@ def generate_ribasim_level_boundaries(
 
     if static_boundary.empty:
         level_boundary=None
-        print("  - no level boundaries")
+        print("   x no level boundaries")
     else:
         level_boundary = ribasim.LevelBoundary(static=static_boundary)
     return level_boundary
@@ -219,7 +223,7 @@ def generate_ribasim_flow_boundaries(
     """generate ribasim flow boundaries for all flow boundary nodes using dummyvalue as flow_rate"""
     print(" - create Ribasim flow boundaries")
     if boundaries_gdf is None:
-        print("  - no flow boundaries")
+        print("   x no flow boundaries")
         return None
 
     static_boundary = pd.DataFrame(
@@ -231,7 +235,7 @@ def generate_ribasim_flow_boundaries(
 
     if static_boundary.empty:
         flow_boundary=None
-        print("  - no flow boundaries")
+        print("   x no flow boundaries")
     else:
         flow_boundary = ribasim.FlowBoundary(static=static_boundary)
     return flow_boundary
@@ -251,7 +255,7 @@ def generate_ribasim_pumps(ribasim_node_gdf: gpd.GeoDataFrame = None):
         pump = ribasim.Pump(static=static_pump)
     else:
         pump=None
-        print("  - no pumps")
+        print("   x no pumps")
     return pump
 
 
@@ -276,7 +280,7 @@ def generate_ribasim_manningresistances(
         manning_resistance = ribasim.ManningResistance(static= static_data)
     else:
         manning_resistance=None
-        print("  - no manning resistances")
+        print("   x no manning resistances")
     return manning_resistance
 
 
