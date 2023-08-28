@@ -158,3 +158,4 @@ def combine_data_from_simulations_sets(
     else:
         nc_data = xr.merge([nc_data_new[nc_nonset_vars], nc_data])
     return nc_data
+

@@ -130,6 +130,19 @@ class RibasimLumpingNetwork(BaseModel):
             return qh_x.loc[set]
         
 
+    def get_qh_relation_split_node_basin(self, basin_id: int, split_node_id: int, set: str = None):
+        node_no = self.basins_gdf[self.basins_gdf.basin==basin_id].mesh1d_nNodes.iloc[0]
+        edge_no = self.split_nodes[self.split_nodes.mesh1d_node_id==split_node_id].mesh1d_nEdges.iloc[0]
+        display(edge_no)
+        h_x = self.nodes_h_df.loc[node_no]
+        q_x = self.edges_q_df.loc[edge_no]
+        qh_x = q_x.merge(h_x, how='outer', left_index=True, right_index=True)
+        if set is None:
+            return qh_x
+        else:
+            return qh_x.loc[set]
+
+
     def get_split_nodes_based_on_type(
         self,
         bifurcations: bool = False,

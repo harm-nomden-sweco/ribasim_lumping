@@ -177,3 +177,4 @@ pyrightconfig.json
 
 notebooks/run_analysis_hooge_raam.ipynb
 notebooks/output/
+ribasim_lumping/assets/countlines.py

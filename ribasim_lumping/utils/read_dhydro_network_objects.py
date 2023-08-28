@@ -95,6 +95,8 @@ def get_pumps_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
         edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
         crs=crs,
     )
+    if pumps_gdf is None:
+        return None
     pumps_gdf['object_type'] = 'pump'
     return pumps_gdf
 
@@ -111,6 +113,8 @@ def get_weirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
         edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
         crs=crs,
     )
+    if weirs_gdf is None:
+        return None
     weirs_gdf['object_type'] = 'weir'
     return weirs_gdf
 
@@ -127,6 +131,8 @@ def get_orifices_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
         edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
         crs=crs,
     )
+    if orifices_gdf is None:
+        return None
     orifices_gdf['object_type'] = 'orifice'
     return orifices_gdf
 
@@ -143,6 +149,8 @@ def get_bridges_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
         edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
         crs=crs,
     )
+    if bridges_gdf is None:
+        return None
     bridges_gdf['object_type'] = 'bridge'
     return bridges_gdf
 
@@ -159,6 +167,8 @@ def get_culverts_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
         edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
         crs=crs,
     )
+    if culverts_gdf is None:
+        return None
     culverts_gdf['object_type'] = 'culvert'
     return culverts_gdf
 
@@ -175,6 +185,8 @@ def get_uniweirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
         edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
         crs=crs,
     )
+    if uniweirs_gdf is None:
+        return None
     uniweirs_gdf['object_type'] = 'uniweir'
     return uniweirs_gdf
 

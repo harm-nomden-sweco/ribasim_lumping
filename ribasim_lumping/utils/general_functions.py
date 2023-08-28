@@ -40,6 +40,8 @@ def find_nearest_edges(
         "split_node_i": np.repeat(hits.index, hits.apply(len)),
         "mesh1d_nEdges": np.concatenate(hits.values)
     })
+    if tmp.empty:
+        return None
     if selection is not None and selection in search_locations and selection in edges:
         tmp = tmp.merge(
             search_locations.reset_index()[selection], 
@@ -97,6 +99,8 @@ def create_objects_gdf(
         tolerance=tolerance,
         crs=crs
     )
+    if projected_points is None:
+        return None
     gdf = gpd.GeoDataFrame(
         data=(gdf.drop(columns='geometry')
               .merge(projected_points, how='outer', left_index=True, right_index=True)),

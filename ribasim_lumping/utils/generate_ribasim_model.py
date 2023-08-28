@@ -80,10 +80,11 @@ def generate_ribasim_edges(
 ):
     """generate ribasim edges between nodes, using basin connections and boundary-basin connections"""
     print(" - create Ribasim edges")
-    basin_connections_gdf = basin_connections[['mesh1d_node_id', 'basin_in','basin_out','geometry']]
+    basin_connections_gdf = basin_connections[['mesh1d_node_id', 'mesh1d_nEdges', 'basin_in','basin_out','geometry']]
 
+    # (1) nodes
     # merge to find splitnode id
-    basin_connections_gdf = basin_connections_gdf.merge(
+    basin_conn_node_gdf = basin_connections_gdf.merge(
         split_nodes_gdf[['splitnode_id','mesh1d_node_id', 'node_id']], 
         left_on='mesh1d_node_id', 
         right_on='mesh1d_node_id'
@@ -91,15 +92,35 @@ def generate_ribasim_edges(
 
     # split connections in the connections upstream and downstream of splitnode
     # add node ID's 
-    basin_connections_gdf_us = basin_connections_gdf.copy()
-    basin_connections_gdf_us['geometry'] = basin_connections_gdf_us.geometry.apply(lambda x: LineString([x.coords[0], x.coords[1]]))
-    basin_connections_gdf_us['from_node_id'] = basin_connections_gdf_us['basin_out'] + 1
-    basin_connections_gdf_us['to_node_id'] = basin_connections_gdf_us['node_id']
+    basin_conn_node_gdf_us = basin_conn_node_gdf.copy()
+    basin_conn_node_gdf_us['geometry'] = basin_conn_node_gdf_us.geometry.apply(lambda x: LineString([x.coords[0], x.coords[1]]))
+    basin_conn_node_gdf_us['from_node_id'] = basin_conn_node_gdf_us['basin_out'] + 1
+    basin_conn_node_gdf_us['to_node_id'] = basin_conn_node_gdf_us['node_id']
 
-    basin_connections_gdf_ds = basin_connections_gdf.copy()
-    basin_connections_gdf_ds['geometry'] = basin_connections_gdf.geometry.apply(lambda x: LineString([x.coords[1], x.coords[2]]))
-    basin_connections_gdf_ds['from_node_id'] = basin_connections_gdf_ds['node_id']
-    basin_connections_gdf_ds['to_node_id'] = basin_connections_gdf_ds['basin_in'] + 1
+    basin_conn_node_gdf_ds = basin_conn_node_gdf.copy()
+    basin_conn_node_gdf_ds['geometry'] = basin_conn_node_gdf.geometry.apply(lambda x: LineString([x.coords[1], x.coords[2]]))
+    basin_conn_node_gdf_ds['from_node_id'] = basin_conn_node_gdf_ds['node_id']
+    basin_conn_node_gdf_ds['to_node_id'] = basin_conn_node_gdf_ds['basin_in'] + 1
+
+    # (1) edges
+    # merge to find splitnode id
+    basin_conn_edge_gdf = basin_connections_gdf.merge(
+        split_nodes_gdf[['splitnode_id','mesh1d_nEdges', 'node_id']], 
+        left_on='mesh1d_nEdges', 
+        right_on='mesh1d_nEdges'
+    )
+
+    # split connections in the connections upstream and downstream of splitnode
+    # add node ID's 
+    basin_conn_edge_gdf_us = basin_conn_edge_gdf.copy()
+    basin_conn_edge_gdf_us['geometry'] = basin_conn_edge_gdf_us.geometry.apply(lambda x: LineString([x.coords[0], x.coords[1]]))
+    basin_conn_edge_gdf_us['from_node_id'] = basin_conn_edge_gdf_us['basin_out'] + 1
+    basin_conn_edge_gdf_us['to_node_id'] = basin_conn_edge_gdf_us['node_id']
+
+    basin_conn_edge_gdf_ds = basin_conn_edge_gdf.copy()
+    basin_conn_edge_gdf_ds['geometry'] = basin_conn_edge_gdf.geometry.apply(lambda x: LineString([x.coords[1], x.coords[2]]))
+    basin_conn_edge_gdf_ds['from_node_id'] = basin_conn_edge_gdf_ds['node_id']
+    basin_conn_edge_gdf_ds['to_node_id'] = basin_conn_edge_gdf_ds['basin_in'] + 1
 
     # boundary basin connections - add node ID's`
     if boundary_basin_connections is None:
@@ -117,7 +138,14 @@ def generate_ribasim_edges(
         boundary_basin_connections_ds['to_node_id'] = boundary_basin_connections_ds['boundary_id'] + len(basins) + 1
 
     # Setup the edges:
-    ribasim_edges = pd.concat([basin_connections_gdf_ds, basin_connections_gdf_us, boundary_basin_connections_us, boundary_basin_connections_ds]) 
+    ribasim_edges = pd.concat([
+        basin_conn_node_gdf_ds, 
+        basin_conn_node_gdf_us, 
+        basin_conn_edge_gdf_ds, 
+        basin_conn_edge_gdf_us, 
+        boundary_basin_connections_us, 
+        boundary_basin_connections_ds,
+    ]) 
     ribasim_edges = ribasim_edges[['from_node_id','to_node_id','geometry']].reset_index(drop=True)
     ribasim_edges['from_node_id'].astype(int)
 
