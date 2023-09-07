@@ -88,13 +88,23 @@ def get_pumps_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     print(" / pumps", end="", flush=True)
     if 'pumps' not in his_data:
         return None
-    pumps_gdf = create_objects_gdf(
-        data={"mesh1d_node_id": his_data.pumps},
-        xcoor=his_data.pump_input_geom_node_coordx,
-        ycoor=his_data.pump_input_geom_node_coordy,
-        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
-        crs=crs,
-    )
+    pumps_gdf = None
+    if 'pump_input_geom_node_coordx' in his_data.variables:
+        pumps_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.pumps},
+            xcoor=his_data.pump_input_geom_node_coordx,
+            ycoor=his_data.pump_input_geom_node_coordy,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
+    elif 'pump_geom_node_coordx' in his_data.variables:
+        pumps_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.pumps},
+            xcoor=(his_data.pump_geom_node_coordx[0::2]+his_data.pump_geom_node_coordx[1::2])/2.0,
+            ycoor=(his_data.pump_geom_node_coordy[0::2]+his_data.pump_geom_node_coordy[1::2])/2.0,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
     if pumps_gdf is None:
         return None
     pumps_gdf['object_type'] = 'pump'
@@ -106,13 +116,23 @@ def get_weirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     print(" / weirs", end="", flush=True)
     if 'weirgens' not in his_data:
         return None
-    weirs_gdf = create_objects_gdf(
-        data={"mesh1d_node_id": his_data.weirgens},
-        xcoor=his_data.weir_input_geom_node_coordx,
-        ycoor=his_data.weir_input_geom_node_coordy,
-        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
-        crs=crs,
-    )
+    weirs_gdf = None
+    if 'weir_input_geom_node_coordx' in his_data.variables:
+        weirs_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.weirgens},
+            xcoor=his_data.weir_input_geom_node_coordx,
+            ycoor=his_data.weir_input_geom_node_coordy,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
+    elif 'weirgen_geom_node_coordx' in his_data.variables:
+        weirs_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.weirgens},
+            xcoor=(his_data.weirgen_geom_node_coordx[0::2]+his_data.weirgen_geom_node_coordx[1::2])/2.0,
+            ycoor=(his_data.weirgen_geom_node_coordy[0::2]+his_data.weirgen_geom_node_coordy[1::2])/2.0,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
     if weirs_gdf is None:
         return None
     weirs_gdf['object_type'] = 'weir'
@@ -124,13 +144,23 @@ def get_orifices_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     print(" / orifices", end="", flush=True)
     if 'orifice' not in his_data:
         return None
-    orifices_gdf = create_objects_gdf(
-        data={"mesh1d_node_id": his_data.orifice},
-        xcoor=his_data.orifice_input_geom_node_coordx,
-        ycoor=his_data.orifice_input_geom_node_coordy,
-        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
-        crs=crs,
-    )
+    orifices_gdf = None
+    if 'orifice_input_geom_node_coordx' in his_data.variables:
+        orifices_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.orifice},
+            xcoor=his_data.orifice_input_geom_node_coordx,
+            ycoor=his_data.orifice_input_geom_node_coordx,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
+    elif 'orifice_geom_node_coordx' in his_data.variables:
+        orifices_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.orifice},
+            xcoor=(his_data.orifice_geom_node_coordx[0::2]+his_data.orifice_geom_node_coordx[1::2])/2.0,
+            ycoor=(his_data.orifice_geom_node_coordy[0::2]+his_data.orifice_geom_node_coordy[1::2])/2.0,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
     if orifices_gdf is None:
         return None
     orifices_gdf['object_type'] = 'orifice'
@@ -142,13 +172,23 @@ def get_bridges_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     print(" / bridges", end="", flush=True)
     if 'bridge' not in his_data:
         return None
-    bridges_gdf = create_objects_gdf(
-        data={"mesh1d_node_id": his_data.bridge},
-        xcoor=his_data.bridge_input_geom_node_coordx,
-        ycoor=his_data.bridge_input_geom_node_coordy,
-        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
-        crs=crs,
-    )
+    bridges_gdf = None
+    if 'bridge_input_geom_node_coordx' in his_data.variables:
+        bridges_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.bridge},
+            xcoor=his_data.bridge_input_geom_node_coordx,
+            ycoor=his_data.bridge_input_geom_node_coordy,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
+    elif 'bridge_geom_node_coordx' in his_data.variables:
+        bridges_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.bridge},
+            xcoor=(his_data.bridge_geom_node_coordx[0::2]+his_data.bridge_geom_node_coordx[1::2])/2.0,
+            ycoor=(his_data.bridge_geom_node_coordy[0::2]+his_data.bridge_geom_node_coordy[1::2])/2.0,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
     if bridges_gdf is None:
         return None
     bridges_gdf['object_type'] = 'bridge'
@@ -160,13 +200,23 @@ def get_culverts_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     print(" / culverts", end="", flush=True)
     if 'culvert' not in his_data:
         return None
-    culverts_gdf = create_objects_gdf(
-        data={"mesh1d_node_id": his_data.culvert},
-        xcoor=his_data.culvert_input_geom_node_coordx,
-        ycoor=his_data.culvert_input_geom_node_coordy,
-        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
-        crs=crs,
-    )
+    culverts_gdf = None
+    if 'culvert_input_geom_node_coordx' in his_data.variables:
+        culverts_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.culvert},
+            xcoor=his_data.culvert_input_geom_node_coordx,
+            ycoor=his_data.culvert_input_geom_node_coordy,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
+    elif 'culvert_geom_node_coordx' in his_data.variables:
+        culverts_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.culvert},
+            xcoor=(his_data.culvert_geom_node_coordx[0::2]+his_data.culvert_geom_node_coordx[1::2])/2.0,
+            ycoor=(his_data.culvert_geom_node_coordy[0::2]+his_data.culvert_geom_node_coordy[1::2])/2.0,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
     if culverts_gdf is None:
         return None
     culverts_gdf['object_type'] = 'culvert'
@@ -178,13 +228,23 @@ def get_uniweirs_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
     print(" / uniweirs", end="", flush=True)
     if 'universalWeirs' not in his_data:
         return None
-    uniweirs_gdf = create_objects_gdf(
-        data={"mesh1d_node_id": his_data.universalWeirs},
-        xcoor=his_data.uniweir_input_geom_node_coordx,
-        ycoor=his_data.uniweir_input_geom_node_coordy,
-        edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
-        crs=crs,
-    )
+    uniweirs_gdf = None
+    if 'uniweir_input_geom_node_coordx' in his_data.variables:
+        uniweirs_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.universalWeirs},
+            xcoor=his_data.uniweir_input_geom_node_coordx,
+            ycoor=his_data.uniweir_input_geom_node_coordy,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
+    elif 'uniweir_geom_node_coordx' in his_data.variables:
+        uniweirs_gdf = create_objects_gdf(
+            data={"mesh1d_node_id": his_data.universalWeirs},
+            xcoor=(his_data.uniweir_geom_node_coordx[0::2]+his_data.uniweir_geom_node_coordx[1::2])/2.0,
+            ycoor=(his_data.uniweir_geom_node_coordy[0::2]+his_data.uniweir_geom_node_coordy[1::2])/2.0,
+            edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
+            crs=crs,
+        )
     if uniweirs_gdf is None:
         return None
     uniweirs_gdf['object_type'] = 'uniweir'

@@ -22,6 +22,11 @@ def generate_ribasim_nodes(
     basins_gdf['node_id'] = basins_gdf['basin'] 
     basins_gdf['type'] = 'Basin'
 
+    if not split_nodes[split_nodes.status==False].empty:
+        print(f"   * {len(split_nodes[split_nodes.status==False])} split_nodes resulting in no_split (removed)")
+        split_nodes = split_nodes[split_nodes.status==True]
+
+
     if boundaries is None:
         boundaries_gdf = None
         len_boundaries = 0

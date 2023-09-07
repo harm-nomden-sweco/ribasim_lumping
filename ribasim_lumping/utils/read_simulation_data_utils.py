@@ -119,14 +119,18 @@ def get_data_from_simulations_set(
     boundary_data = None
     for root, dirs, files in os.walk(simulations_dir/simulations_names[0]):
         for file in files:
-            if file.endswith("boundaryconditions1d.bc"):
+            if file.endswith("boundaryconditions1d.bc") or file == 'boundaries.bc':
                 filepath = root + os.sep + file
                 forcingmodel_object = hcdfm.ForcingModel(filepath)
                 boundary_data = pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])
                 # convert dictionary with boundary type to columns
-                boundary_data = pd.concat([boundary_data.drop(['quantityunitpair'], axis=1), pd.DataFrame.from_records(boundary_data['quantityunitpair'])[0].apply(pd.Series)], axis=1)
+                boundary_data = pd.concat([
+                    boundary_data.drop(['quantityunitpair'], axis=1), 
+                    pd.DataFrame.from_records(boundary_data['quantityunitpair'])[0].apply(pd.Series)
+                ], axis=1)
     if boundary_data is None:
         print(" * simulation does not contain boundary file (ending with 'boundaryconditions1d.bc'")
+    boundary_data = boundary_data[boundary_data['quantity'].isin(['waterlevelbnd', 'dischargebnd'])]
     return his_data, map_data, boundary_data
 
 
