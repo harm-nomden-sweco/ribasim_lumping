@@ -161,6 +161,8 @@ def create_basin_areas_based_on_drainage_areas(
     areas = gpd.GeoDataFrame(areas, geometry='geometry', crs=edges.crs)
     areas = areas.sort_values(by='area')
     basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=['area'])
+    basin_areas['basin'] = basin_areas['basin'].astype(int)
+    basin_areas['area_ha'] = basin_areas.geometry.area / 10000.0
     return areas, basin_areas
 
 
@@ -184,6 +186,29 @@ def create_basins_based_on_subgraphs_and_nodes(graph, nodes):
     tmp = tmp[tmp['basin']!=-1].sort_values(by=['basin', 'centrality'], ascending=[True, False])
     basins = tmp.groupby(by='basin').first().reset_index().set_crs(nodes.crs)
     return basins
+
+
+def check_if_nodes_edges_within_basin_areas(nodes, edges, basin_areas):
+    """"check whether nodes assigned to a basin are also within the polygon assigned to that basin"""
+    if basin_areas is None:
+        nodes['basin_area'] = -1
+        nodes['basin_check'] = True
+        edges['basin_area'] = -1
+        edges['basin_check'] = True
+        return nodes, edges
+    
+    nodes = nodes.drop(columns=['basin_area'], errors='ignore')
+    nodes = (gpd.sjoin(nodes, basin_areas[['geometry', 'basin']], how='left').drop(columns=['index_right']))
+    nodes['basin_right'] = nodes['basin_right'].fillna(-1).astype(int)
+    nodes = nodes.rename(columns={'basin_left': 'basin', 'basin_right': 'basin_area'})
+    nodes['basin_check'] = nodes['basin']==nodes['basin_area']
+
+    edges = edges.drop(columns=['basin_area'], errors='ignore')
+    edges = (gpd.sjoin(edges, basin_areas[['geometry', 'basin']], how='left', predicate='within').drop(columns=['index_right']))
+    edges = edges.rename(columns={'basin_left': 'basin', 'basin_right': 'basin_area'})
+    edges['basin_area'] = edges['basin_area'].fillna(-1).astype(int)
+    edges['basin_check'] = edges['basin']==edges['basin_area']
+    return nodes, edges
 
 
 def create_basin_connections(
@@ -396,12 +421,11 @@ def create_basins_and_connections_using_split_nodes(
     basins = None
     network_graph = create_graph_based_on_nodes_edges(nodes, edges)
     network_graph = split_graph_based_on_split_nodes(network_graph, split_nodes, edges)
-    nodes, edges = add_basin_code_from_network_to_nodes_and_edges(
-        network_graph, nodes, edges, split_nodes
-    )
+    nodes, edges = add_basin_code_from_network_to_nodes_and_edges(network_graph, nodes, edges, split_nodes)
     split_nodes = check_if_split_node_is_used(split_nodes, nodes, edges)
     basins = create_basins_based_on_subgraphs_and_nodes(network_graph, nodes)
     areas, basin_areas = create_basin_areas_based_on_drainage_areas(edges, areas)
+    nodes, edges = check_if_nodes_edges_within_basin_areas(nodes, edges, basin_areas)
     boundary_conn = create_boundary_connections(boundaries, nodes, basins)
     basin_connections = create_basin_connections(split_nodes, edges, nodes, basins, crs)
 

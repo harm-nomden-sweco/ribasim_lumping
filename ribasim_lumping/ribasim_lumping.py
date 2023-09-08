@@ -336,7 +336,7 @@ class RibasimLumpingNetwork(BaseModel):
 
         ribasim_model = generate_ribasimmodel(
             basins=self.basins_gdf, 
-            split_nodes=self.split_nodes, 
+            split_nodes=self.split_nodes.copy(), 
             boundaries=self.boundaries_gdf, 
             basin_connections=self.basin_connections_gdf, 
             boundary_basin_connections=self.boundary_basin_connections_gdf,
