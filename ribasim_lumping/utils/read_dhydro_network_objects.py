@@ -40,7 +40,7 @@ def get_nodes_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
     ).drop(columns=['mesh1d_node_x', 'mesh1d_node_y'])
     nodes_gdf["mesh1d_node_id"] = nodes_gdf["mesh1d_node_id"].astype(str).apply(lambda r: r[2:-1].strip())
     nodes_h_df = map_data.mesh1d_s1.to_dataframe()[['mesh1d_s1']]
-    nodes_h_df = nodes_h_df.reorder_levels(['mesh1d_nNodes', 'set', 'condition'])
+    nodes_h_df = nodes_h_df.reorder_levels(['mesh1d_nNodes', 'set', 'condition']).sort_index()
     return nodes_gdf, nodes_h_df
 
 
@@ -63,7 +63,7 @@ def get_edges_dhydro_network(map_data, crs) -> gpd.GeoDataFrame:
         edges_nodes, how="inner", left_index=True, right_index=True
     )
     edges_q_df = map_data.mesh1d_q1.to_dataframe()[['mesh1d_q1']]
-    edges_q_df = edges_q_df.reorder_levels(['mesh1d_nEdges', 'set', 'condition'])
+    edges_q_df = edges_q_df.reorder_levels(['mesh1d_nEdges', 'set', 'condition']).sort_index()
     return edges_gdf, edges_q_df
 
 
@@ -149,7 +149,7 @@ def get_orifices_dhydro_network(his_data, edges_gdf, crs) -> gpd.GeoDataFrame:
         orifices_gdf = create_objects_gdf(
             data={"mesh1d_node_id": his_data.orifice},
             xcoor=his_data.orifice_input_geom_node_coordx,
-            ycoor=his_data.orifice_input_geom_node_coordx,
+            ycoor=his_data.orifice_input_geom_node_coordy,
             edges_gdf=edges_gdf[["mesh1d_nEdges", "geometry"]],
             crs=crs,
         )

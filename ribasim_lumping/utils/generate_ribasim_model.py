@@ -61,7 +61,7 @@ def generate_ribasim_nodes(
     if isinstance(split_node_id_conversion, Dict):
         for key, value in split_node_id_conversion.items():
             if len(splitnodes_gdf[splitnodes_gdf['mesh1d_node_id'] == key]) == 0:
-                print(f" * split_node type conversion id={key} (type={value}) does not exist")
+                print(f"   * split_node type conversion id={key} (type={value}) does not exist")
             splitnodes_gdf.loc[splitnodes_gdf['mesh1d_node_id'] == key, 'type'] = value
 
     # concat nodes

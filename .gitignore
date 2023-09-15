@@ -175,6 +175,5 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 
-notebooks/run_analysis_hooge_raam.ipynb
 notebooks/output/
 ribasim_lumping/assets/countlines.py
