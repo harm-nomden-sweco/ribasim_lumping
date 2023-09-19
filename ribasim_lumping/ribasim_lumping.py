@@ -25,6 +25,10 @@ from .utils.generate_basins_areas import create_basins_and_connections_using_spl
 from .utils.read_dhydro_network_objects import get_dhydro_network_objects
 from .utils.general_functions import find_nearest_nodes
 from .utils.generate_ribasim_model import generate_ribasimmodel
+from .utils.export_splitnodes import (
+    write_structures_to_excel,
+    read_structures_from_excel,
+)
 
 
 class RibasimLumpingNetwork(BaseModel):
@@ -406,6 +410,35 @@ class RibasimLumpingNetwork(BaseModel):
             shutil.copy(qgz_path_stored, qgz_path)
         print("")
         print(f'Export location: {qgz_path}')
+
+    def export_structures_to_excel(
+            self,
+            results_dir: Union[Path, str] = None,
+            ):
+        
+        if results_dir is None:
+            results_dir = Path(self.results_dir, self.name)
+
+        write_structures_to_excel(
+                pumps = self.pumps_gdf,
+                weirs = self.weirs_gdf,
+                orifices=self.orifices_gdf,
+                bridges=self.bridges_gdf,
+                culverts=self.culverts_gdf,
+                uniweirs=self.uniweirs_gdf,
+                split_nodes= self.split_nodes,
+                split_node_type_conversion= self.split_node_type_conversion,
+                split_node_id_conversion= self.split_node_id_conversion,
+                results_dir= results_dir,
+        )
+
+    def import_structures_from_excel(
+            self,
+            excel_path: Union[Path, str],
+            ):
+        structures_excel, structures_ids_to_include_as_splitnode, split_node_id_conversion  = read_structures_from_excel(excel_path)
+
+        return structures_ids_to_include_as_splitnode, split_node_id_conversion
 
 
 def create_ribasim_lumping_network(**kwargs):
