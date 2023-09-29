@@ -22,7 +22,7 @@ from .utils.read_simulation_data_utils import (
     combine_data_from_simulations_sets,
 )
 from .utils.generate_basins_areas import create_basins_and_connections_using_split_nodes
-from .utils.read_dhydro_network_objects import get_dhydro_network_objects
+from .utils.read_dhydro_network_objects import (get_dhydro_network_objects, get_data_from_dhydro_input, get_structures_dhydro)
 from .utils.general_functions import find_nearest_nodes
 from .utils.generate_ribasim_model import generate_ribasimmodel
 from .utils.export_splitnodes import (
@@ -60,6 +60,12 @@ class RibasimLumpingNetwork(BaseModel):
     split_nodes: gpd.GeoDataFrame = None
     basin_connections_gdf: gpd.GeoDataFrame = None
     boundaries_gdf: gpd.GeoDataFrame = None
+    structures_df: pd.DataFrame = None
+    weir_df: pd.DataFrame = None
+    uniweir_df: pd.DataFrame = None
+    culvert_df: pd.DataFrame = None
+    orifice_df: pd.DataFrame = None
+    pump_df: pd.DataFrame = None
     boundary_basin_connections_gdf: gpd.GeoDataFrame = None
     split_node_type_conversion: Dict = None
     split_node_id_conversion: Dict = None
@@ -122,7 +128,16 @@ class RibasimLumpingNetwork(BaseModel):
             self.stations_gdf, self.pumps_gdf, self.weirs_gdf, self.orifices_gdf, \
             self.bridges_gdf, self.culverts_gdf, self.uniweirs_gdf, \
             self.confluences_gdf, self.bifurcations_gdf, self.boundaries_gdf = results
+        
+    def add_data_from_dhydro_input(
+            self,
+            dhydro_dir,
+            simulation_names
+            ):
+        
+        structures_df , boundary_data =  get_data_from_dhydro_input(dhydro_dir,simulation_names)
 
+        self.weir_df, self.culvert_df, self.uniweir_df, self.pump_df, self.orifice_df = get_structures_dhydro(structures_df)
 
     def get_qh_relation_node_edge(self, node_no: int, edge_no: int, set: str = None):
         h_x = self.nodes_h_df.loc[node_no]
@@ -137,7 +152,6 @@ class RibasimLumpingNetwork(BaseModel):
     def get_qh_relation_split_node_basin(self, basin_id: int, split_node_id: int, set: str = None):
         node_no = self.basins_gdf[self.basins_gdf.basin==basin_id].mesh1d_nNodes.iloc[0]
         edge_no = self.split_nodes[self.split_nodes.mesh1d_node_id==split_node_id].mesh1d_nEdges.iloc[0]
-        display(edge_no)
         h_x = self.nodes_h_df.loc[node_no]
         q_x = self.edges_q_df.loc[edge_no]
         qh_x = q_x.merge(h_x, how='outer', left_index=True, right_index=True)
