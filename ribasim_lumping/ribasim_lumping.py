@@ -22,7 +22,8 @@ from .utils.read_simulation_data_utils import (
     combine_data_from_simulations_sets,
 )
 from .utils.generate_basins_areas import create_basins_and_connections_using_split_nodes
-from .utils.read_dhydro_network_objects import (get_dhydro_network_objects, get_data_from_dhydro_input, get_structures_dhydro)
+from .utils.read_dhydro_network_objects import get_dhydro_network_objects
+from .utils.read_dhydro_network_objects_full import get_dhydro_network_objects_full
 from .utils.general_functions import find_nearest_nodes
 from .utils.generate_ribasim_model import generate_ribasimmodel
 from .utils.export_splitnodes import (
@@ -43,6 +44,7 @@ class RibasimLumpingNetwork(BaseModel):
     boundary_data: Dict = None
     edges_gdf: gpd.GeoDataFrame = None
     nodes_gdf: gpd.GeoDataFrame = None
+    branches_gdf: gpd.GeoDataFrame = None
     edges_q_df: pd.DataFrame = None
     nodes_h_df: pd.DataFrame = None
     network_graph: nx.DiGraph = None
@@ -60,16 +62,15 @@ class RibasimLumpingNetwork(BaseModel):
     split_nodes: gpd.GeoDataFrame = None
     basin_connections_gdf: gpd.GeoDataFrame = None
     boundaries_gdf: gpd.GeoDataFrame = None
-    structures_df: pd.DataFrame = None
-    weir_df: pd.DataFrame = None
-    uniweir_df: pd.DataFrame = None
-    culvert_df: pd.DataFrame = None
-    orifice_df: pd.DataFrame = None
-    pump_df: pd.DataFrame = None
     boundary_basin_connections_gdf: gpd.GeoDataFrame = None
     split_node_type_conversion: Dict = None
     split_node_id_conversion: Dict = None
     ribasim_model: ribasim.Model = None
+    set_names: List[str] = None
+    simulations_dir: List[str] = None
+    simulations_names: List[List[str]] = None
+    simulations_output_dir: List[str] = None
+    simulations_ts: List[Union[List, pd.DatetimeIndex]] = None
     crs: int = 28992
 
     class Config:
@@ -89,25 +90,34 @@ class RibasimLumpingNetwork(BaseModel):
         set_name: str,
         simulations_dir: Path,
         simulations_names: List[str],
-        simulation_output_dir: str,
+        simulations_output_dir: str,
         simulations_ts: Union[List, pd.DatetimeIndex] = [-1],
     ) -> Tuple[xr.Dataset, xu.UgridDataset]:
         """receives his- and map-data
         - from d-hydro simulations with names: simulation_names
         - within directory: simulations_dir
         - at timestamps: simulations_ts"""
-        if simulations_names is None:
-            if not Path(simulations_dir).exists():
-                raise ValueError(
-                    f"Directory D-Hydro calculations does not exist: {simulations_dir}"
-                )
-            self.simulation_names = get_simulation_names_from_dir(simulations_dir)
+        if self.set_names is None: 
+            self.set_names = []
+        self.set_names.append(set_name)
+        if self.simulations_dir is None: 
+            self.simulations_dir = []
+        self.simulations_dir.append(simulations_dir)
+        if self.simulations_names is None: 
+            self.simulations_names = []
+        self.simulations_names.append(simulations_names)
+        if self.simulations_output_dir is None: 
+            self.simulations_output_dir = []
+        self.simulations_output_dir.append(simulations_output_dir)
+        if self.simulations_ts is None: 
+            self.simulations_ts = []
+        self.simulations_ts.append(simulations_ts)
 
         his_data, map_data, boundary_data = get_data_from_simulations_set(
             set_name=set_name,
             simulations_dir=simulations_dir,
             simulations_names=simulations_names,
-            simulation_output_dir=simulation_output_dir,
+            simulations_output_dir=simulations_output_dir,
             simulations_ts=simulations_ts,
         )
         self.his_data = combine_data_from_simulations_sets(self.his_data, his_data)
@@ -129,15 +139,16 @@ class RibasimLumpingNetwork(BaseModel):
             self.bridges_gdf, self.culverts_gdf, self.uniweirs_gdf, \
             self.confluences_gdf, self.bifurcations_gdf, self.boundaries_gdf = results
         
-    def add_data_from_dhydro_input(
-            self,
-            dhydro_dir,
-            simulation_names
-            ):
-        
-        structures_df , boundary_data =  get_data_from_dhydro_input(dhydro_dir,simulation_names)
+    def add_network_full_data(self):
+        """Extracts nodes, edges, confluences, bifurcations, weirs, pumps from his/map"""
+        dhydro_dir = self.dhydro_dir
+        simulation_name = self.simulations_names[0][0]
+        crs = self.crs
+        results = get_dhydro_network_objects_full(dhydro_dir=dhydro_dir, simulation_name=simulation_name, crs=crs)
 
-        self.weir_df, self.culvert_df, self.uniweir_df, self.pump_df, self.orifice_df = get_structures_dhydro(structures_df)
+        self.nodes_gdf, self.nodes_h_df, self.edges_gdf, self.edges_q_df, self.branches_gdf, \
+            self.stations_gdf, self.pumps_gdf, self.weirs_gdf, self.orifices_gdf, \
+            self.bridges_gdf, self.culverts_gdf, self.uniweirs_gdf, self.boundaries_gdf = results
 
     def get_qh_relation_node_edge(self, node_no: int, edge_no: int, set: str = None):
         h_x = self.nodes_h_df.loc[node_no]

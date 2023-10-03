@@ -22,7 +22,7 @@ def get_simulation_names_from_dir(path_dir=None) -> List[str]:
 def get_data_from_simulation(
     simulations_dir: str,
     simulation_name: str,
-    simulation_output_dir: str,
+    simulations_output_dir: str,
     simulations_ts: Union[List, pd.DatetimeIndex],
     n_start: int = 0,
 ) -> Tuple[xr.Dataset, xu.UgridDataset]:
@@ -33,7 +33,7 @@ def get_data_from_simulation(
     Returns: map_data (edges/nodes) and his_data (structures) from one simulation"""
 
     sim_dir = Path(simulations_dir, simulation_name)
-    his_map_dir = Path(sim_dir, simulation_output_dir)
+    his_map_dir = Path(sim_dir, simulations_output_dir)
     
     # file names
     his_file = [h for h in his_map_dir.glob('*_his.nc')]
@@ -77,7 +77,7 @@ def get_data_from_simulations_set(
     set_name: str,
     simulations_dir: Path,
     simulations_names: List[str],
-    simulation_output_dir: str,
+    simulations_output_dir: str,
     simulations_ts: Union[List, pd.DatetimeIndex],
 ) -> Tuple[xr.Dataset, xu.UgridDataset]:
     """ "Combines simulation data:
@@ -97,7 +97,7 @@ def get_data_from_simulations_set(
         map_data_x, his_data_x = get_data_from_simulation(
             simulations_dir=simulations_dir,
             simulation_name=simulation_name,
-            simulation_output_dir=simulation_output_dir,
+            simulations_output_dir=simulations_output_dir,
             simulations_ts=simulations_ts,
             n_start=n_start,
         )

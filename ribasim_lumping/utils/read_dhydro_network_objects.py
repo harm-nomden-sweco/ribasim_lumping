@@ -7,6 +7,7 @@ from .general_functions import create_objects_gdf
 import hydrolib.core.dflowfm as hcdfm
 from pathlib import Path
 from typing import List, Union, Tuple
+from shapely.geometry import Point
 
 
 def get_dhydro_network_objects(map_data, his_data, boundary_data, crs):
@@ -232,53 +233,5 @@ def get_boundaries(
         return None
     return boundaries_gdf
 
-def get_data_from_dhydro_input(
-    dhydro_dir: Path,
-    simulations_names: List[str],
-):
-    """ "read dhydro input data:
-    - from simulation (names)
-    - from dhydro folder (dir)
-    Returns: dataframe of structures and boundary data
-    """
-    # get boundary1dconditions data from simulation
-    workdir = Path(dhydro_dir,simulations_names[0],'FlowFM\input')
-    inifle = "structures.ini"
-    inifilepath = workdir / inifle
-    m = hcdfm.structure.models.StructureModel(inifilepath)
-    df_structures = pd.DataFrame([f.__dict__ for f in m.structure])
-    df_structures = df_structures.drop(columns=['comments'])
-
-    boundary_data = None
-    for root, dirs, files in os.walk(dhydro_dir/simulations_names[0]):
-        for file in files:
-            if file.endswith("boundaryconditions1d.bc"):
-                filepath = root + os.sep + file
-                forcingmodel_object = hcdfm.ForcingModel(filepath)
-                boundary_data = pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])
-                # convert dictionary with boundary type to columns
-                boundary_data = pd.concat([boundary_data.drop(['quantityunitpair'], axis=1), pd.DataFrame.from_records(boundary_data['quantityunitpair'])[0].apply(pd.Series)], axis=1)
-    if boundary_data is None:
-        print(" * simulation does not contain boundary file (ending with 'boundaryconditions1d.bc'")
-    return df_structures, boundary_data
-
-def get_structures_dhydro(df_structures):
-    """return dataframes of all structures"""
-    weir_columns = ['id','branchid','chainage','crestlevel','crestwidth']
-    weir_df = df_structures.loc[df_structures['type'] == 'weir'][weir_columns].set_index('id')
-
-    culvert_columns = ['id','branchid','chainage','leftlevel','rightlevel','length']
-    culvert_df = df_structures.loc[df_structures['type'] == 'culvert'][culvert_columns].set_index('id')
-
-    uniweir_columns = ['id','branchid','chainage','crestlevel']
-    umiweir_df = df_structures.loc[df_structures['type'] == 'universalWeir'][uniweir_columns].set_index('id')
-
-    pump_columns = ['id','branchid','chainage','capacity']
-    pump_df = df_structures.loc[df_structures['type'] == 'universalWeir'][pump_columns].set_index('id')
-
-    orifice_columns = ['id','branchid','chainage','crestlevel','crestwidth']
-    orifice_df = df_structures.loc[df_structures['type'] == 'weir'][orifice_columns].set_index('id')
-
-    return weir_df, culvert_df, umiweir_df, pump_df, orifice_df
 
 
