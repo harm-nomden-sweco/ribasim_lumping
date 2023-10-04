@@ -78,8 +78,8 @@ class RibasimLumpingNetwork(BaseModel):
         self,
         set_name: str,
         simulations_dir: Path,
-        simulations_names: List[str],
-        simulation_output_dir: str,
+        simulations_output_dir: str,
+        simulations_names: List[str] = None,
         simulations_ts: Union[List, pd.DatetimeIndex] = [-1],
     ) -> Tuple[xr.Dataset, xu.UgridDataset]:
         """receives his- and map-data
@@ -92,12 +92,16 @@ class RibasimLumpingNetwork(BaseModel):
                     f"Directory D-Hydro calculations does not exist: {simulations_dir}"
                 )
             self.simulation_names = get_simulation_names_from_dir(simulations_dir)
+        if self.his_data is not None:
+            if set_name in self.his_data.set:
+                print(f'    x set_name "{set_name}" already taken. data not overwritten. change set_name')
+                return self.his_data, self.map_data, self.boundary_data
 
         his_data, map_data, boundary_data = get_data_from_simulations_set(
             set_name=set_name,
             simulations_dir=simulations_dir,
             simulations_names=simulations_names,
-            simulation_output_dir=simulation_output_dir,
+            simulations_output_dir=simulations_output_dir,
             simulations_ts=simulations_ts,
         )
         self.his_data = combine_data_from_simulations_sets(self.his_data, his_data)

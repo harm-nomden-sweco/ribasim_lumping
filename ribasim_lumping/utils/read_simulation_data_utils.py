@@ -22,7 +22,7 @@ def get_simulation_names_from_dir(path_dir=None) -> List[str]:
 def get_data_from_simulation(
     simulations_dir: str,
     simulation_name: str,
-    simulation_output_dir: str,
+    simulations_output_dir: str,
     simulations_ts: Union[List, pd.DatetimeIndex],
     n_start: int = 0,
 ) -> Tuple[xr.Dataset, xu.UgridDataset]:
@@ -33,7 +33,7 @@ def get_data_from_simulation(
     Returns: map_data (edges/nodes) and his_data (structures) from one simulation"""
 
     sim_dir = Path(simulations_dir, simulation_name)
-    his_map_dir = Path(sim_dir, simulation_output_dir)
+    his_map_dir = Path(sim_dir, simulations_output_dir)
     
     # file names
     his_file = [h for h in his_map_dir.glob('*_his.nc')]
@@ -77,7 +77,7 @@ def get_data_from_simulations_set(
     set_name: str,
     simulations_dir: Path,
     simulations_names: List[str],
-    simulation_output_dir: str,
+    simulations_output_dir: str,
     simulations_ts: Union[List, pd.DatetimeIndex],
 ) -> Tuple[xr.Dataset, xu.UgridDataset]:
     """ "Combines simulation data:
@@ -90,6 +90,9 @@ def get_data_from_simulations_set(
     his_data = None
     map_data = None
     n_start = 0
+    condition_vars_his = []
+    condition_vars_map = []
+
     for simulation_name in simulations_names:
         print(
             f" - Simulation set ({set_name}): {simulation_name} | Timestamps: {len(simulations_ts)} | his.nc and map.nc"
@@ -97,22 +100,40 @@ def get_data_from_simulations_set(
         map_data_x, his_data_x = get_data_from_simulation(
             simulations_dir=simulations_dir,
             simulation_name=simulation_name,
-            simulation_output_dir=simulation_output_dir,
+            simulations_output_dir=simulations_output_dir,
             simulations_ts=simulations_ts,
             n_start=n_start,
         )
+
         if his_data is None or map_data is None:
             his_data = his_data_x
             map_data = map_data_x
         else:
-            his_data = xr.concat([his_data, his_data_x], dim="condition")
-            map_data = xr.concat([map_data, map_data_x], dim="condition")
+            his_data = combine_data_from_simulations_sets(
+                nc_data=his_data, 
+                nc_data_new=his_data_x, 
+                xugrid=False, 
+                dim='condition'
+            )
+            map_data = combine_data_from_simulations_sets(
+                nc_data=map_data, 
+                nc_data_new=map_data_x, 
+                xugrid=True, 
+                dim='condition'
+            )
+
         for var_name, var in map_data.data_vars.items():
             if "condition" in var.dims:
-                map_data[var_name] = var.expand_dims(set=[set_name])
+                if "set" not in var.dims:
+                    map_data[var_name] = var.expand_dims(set=[set_name])
+                elif set_name not in var.set:
+                    map_data[var_name] = var.expand_dims(set=[set_name])
         for var_name, var in his_data.data_vars.items():
             if "condition" in var.dims:
-                his_data[var_name] = var.expand_dims(set=[set_name])
+                if "set" not in var.dims:
+                    his_data[var_name] = var.expand_dims(set=[set_name])
+                elif set_name not in var.set:
+                    his_data[var_name] = var.expand_dims(set=[set_name])
         n_start = len(his_data.condition)
     
     # get boundary1dconditions data from simulation
@@ -143,9 +164,7 @@ def combine_data_from_simulations_sets(
     """ "Combine his.nc and map.nc data from two cases over dimension DIM assuming
     that all nc-variables not including DIM as dimension are equal"""
     nc_set_vars = [v_n for v_n, v in nc_data_new.data_vars.items() if dim in v.dims]
-    nc_nonset_vars = [
-        v_n for v_n, v in nc_data_new.data_vars.items() if dim not in v.dims
-    ]
+    nc_nonset_vars = [v_n for v_n, v in nc_data_new.data_vars.items() if dim not in v.dims]
     if nc_data is None:
         nc_data = nc_data_new[nc_set_vars]
     else:
