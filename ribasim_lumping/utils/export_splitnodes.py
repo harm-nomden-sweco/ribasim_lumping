@@ -39,36 +39,44 @@ def write_structures_to_excel(
         splitnodes = split_nodes.copy()
         # splitnodes['splitnode']='yes'
 
-    with pd.ExcelWriter(f"{results_dir}/structures.xlsx") as writer:  
+    with pd.ExcelWriter(f"{results_dir}/structures.xlsx", engine='xlsxwriter') as writer:  
         for gdf in list_gdfs:
-            if gdf is not None:
-                # merge structure gdf with splitnode
-                if split_nodes is not None:
-                    if split_node_type_conversion is not None:
-                        # voeg conversie tabel toe
-                        split_node_type_conversion = split_node_type_conversion
-                        if isinstance(split_node_type_conversion, Dict):
-                            for key, value in split_node_type_conversion.items():
-                                splitnodes['type'] = splitnodes['split_type'].replace(split_node_type_conversion)
-                        
-                        split_node_id_conversion = split_node_id_conversion
-                        if isinstance(split_node_id_conversion, Dict):
-                            for key, value in split_node_id_conversion.items():
-                                if len(splitnodes[splitnodes['mesh1d_node_id'] == key]) == 0:
-                                    print(f" * split_node type conversion id={key} (type={value}) does not exist")
-                                splitnodes.loc[splitnodes['mesh1d_node_id'] == key, 'type'] = value
-                    # merge structures with splitnodes
-                    structure = gdf.merge(splitnodes, left_on='mesh1d_node_id', right_on='mesh1d_node_id', how='left', suffixes=('', '_spl'),indicator=True)
-                    structure['use_splitnode'] = structure['_merge'].map({'both': 'yes', 'left_only': 'no'})
-                else:
-                    structure=gdf.copy()
-                    
-                # save structures in excelfile, with seperate sheet per structuretype 
-                if not structure.empty:
-                    struct_name=structure['object_type'][0]
-                    print(f'write {struct_name} to excel')
-                    structure = structure[structure.columns & ['mesh1d_node_id', 'projection_x', 'projection_y', 'object_type','use_splitnode','status','splitnode','type']]
-                    structure.to_excel(writer, sheet_name=struct_name)
+            if gdf is None:
+                continue
+            # merge structure gdf with splitnode
+            if split_nodes is None:
+                structure=gdf.copy()
+            else:
+                if split_node_type_conversion is not None:
+                    # voeg conversie tabel toe
+                    split_node_type_conversion = split_node_type_conversion
+                    if isinstance(split_node_type_conversion, Dict):
+                        for key, value in split_node_type_conversion.items():
+                            splitnodes['type'] = splitnodes['split_type'].replace(split_node_type_conversion)
+                    split_node_id_conversion = split_node_id_conversion
+                    if isinstance(split_node_id_conversion, Dict):
+                        for key, value in split_node_id_conversion.items():
+                            if len(splitnodes[splitnodes['mesh1d_node_id'] == key]) == 0:
+                                print(f" * split_node type conversion id={key} (type={value}) does not exist")
+                            splitnodes.loc[splitnodes['mesh1d_node_id'] == key, 'type'] = value
+
+                # merge structures with splitnodes
+                structure = gdf.merge(
+                    splitnodes, 
+                    left_on='mesh1d_node_id', 
+                    right_on='mesh1d_node_id', 
+                    how='left', 
+                    suffixes=('', '_spl'),
+                    indicator=True
+                )
+                structure['use_splitnode'] = structure['_merge'].map({'both': 'yes', 'left_only': 'no'})
+                
+            # save structures in excelfile, with seperate sheet per structuretype 
+            if not structure.empty:
+                struct_name=structure['object_type'][0]
+                print(f'write {struct_name} to excel')
+                structure = structure[['mesh1d_node_id', 'projection_x', 'projection_y', 'object_type','use_splitnode','status','splitnode','type']]
+                structure.to_excel(writer, sheet_name=struct_name)
 
 def read_structures_from_excel(excel_path):
     """ import all structure ids from excelfile 

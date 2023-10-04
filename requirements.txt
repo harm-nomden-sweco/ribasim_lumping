@@ -13,12 +13,17 @@ pandas==1.5.3
 xarray==2023.2.0
 ugrid==0.13.0
 xugrid==0.5.0
-ribasim==0.2.0
+# ribasim==0.2.0
 dfm_tools==0.11.0
 hydrolib-core==0.5.2
 contextily==1.3.0
 pydantic
+pandera==0.17.1
+tomli==2.0.1
+tomli_w==1.0.0
 momepy==0.6.0
 networkx==3.0
 black==23.7.0
+openpyxl
 ipykernel
+pandas-xlsx-tables==1.0.0
