@@ -1,4 +1,8 @@
 {
-  "editor.formatOnSaveMode": "modifications",
-  "editor.formatOnSave": false
+  "python.analysis.typeCheckingMode": "basic",
+  "editor.formatOnSaveMode": "file",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": true
+  },
 }

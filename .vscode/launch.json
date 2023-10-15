@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "run_network_analysis",
+            "name": "run_analysis_hooge_raam",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/test/run_network_analysis.ipynb",
+            "program": "${workspaceFolder}/notebooks/run_analysis_hooge_raam.ipynb",
             "console": "integratedTerminal",
             "justMyCode": true,
             "cwd": "${fileDirname}"

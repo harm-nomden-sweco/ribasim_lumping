@@ -9,6 +9,7 @@ import dfm_tools as dfmt
 import xarray as xr
 import xugrid as xu
 import hydrolib.core.dflowfm as hcdfm
+from .read_dhydro_network_locations import get_dhydro_files
 
 
 def get_simulation_names_from_dir(path_dir=None) -> List[str]:
@@ -20,9 +21,7 @@ def get_simulation_names_from_dir(path_dir=None) -> List[str]:
 
 
 def get_data_from_simulation(
-    simulations_dir: str,
-    simulation_name: str,
-    simulations_output_dir: str,
+    simulation_path: Path,
     simulations_ts: Union[List, pd.DatetimeIndex],
     n_start: int = 0,
 ) -> Tuple[xr.Dataset, xu.UgridDataset]:
@@ -31,21 +30,15 @@ def get_data_from_simulation(
     - at certain timestamps.
     - Replaces time coordinate with counter 'condition' (int). Starts counting at n_start
     Returns: map_data (edges/nodes) and his_data (structures) from one simulation"""
+    files = get_dhydro_files(simulation_path)
+    his_file = files['output_his_file']
+    map_file = files['output_map_file']
 
-    sim_dir = Path(simulations_dir, simulation_name)
-    his_map_dir = Path(sim_dir, simulations_output_dir)
-    
     # file names
-    his_file = [h for h in his_map_dir.glob('*_his.nc')]
-    if len(his_file) == 1:
-        his_file = his_file[0]
-    else:
-        raise ValueError(f'no his_file present: {his_map_dir}*_his.nc')
-    map_file = [m for m in his_map_dir.glob('*_map.nc')]
-    if len(map_file) == 1:
-        map_file = map_file[0]
-    else:
-        raise ValueError(f'no his_file present: {his_map_dir}*_map.nc')
+    if not his_file.exists():
+        raise ValueError(f'no his_file present: {simulation_path}*_his.nc')
+    if not map_file.exists():
+        raise ValueError(f'no his_file present: {simulation_path}*_map.nc')
     
     try:
         his_data = xr.open_mfdataset([his_file], preprocess=dfmt.preprocess_hisnc)
@@ -71,13 +64,13 @@ def get_data_from_simulation(
         map_data = map_data.isel(time=simulations_ts)
     map_data = map_data.rename({"time": "condition"})
     map_data.coords["condition"] = np.arange(n_start, n_start + len(map_data.condition))
-    return map_data, his_data
+    return map_data, his_data, files
+
 
 def get_data_from_simulations_set(
     set_name: str,
     simulations_dir: Path,
     simulations_names: List[str],
-    simulations_output_dir: str,
     simulations_ts: Union[List, pd.DatetimeIndex],
 ) -> Tuple[xr.Dataset, xu.UgridDataset]:
     """ "Combines simulation data:
@@ -90,17 +83,14 @@ def get_data_from_simulations_set(
     his_data = None
     map_data = None
     n_start = 0
-    condition_vars_his = []
-    condition_vars_map = []
-
+    
     for simulation_name in simulations_names:
+        simulation_path = Path(simulations_dir, simulation_name)
         print(
             f" - Simulation set ({set_name}): {simulation_name} | Timestamps: {len(simulations_ts)} | his.nc and map.nc"
         )
-        map_data_x, his_data_x = get_data_from_simulation(
-            simulations_dir=simulations_dir,
-            simulation_name=simulation_name,
-            simulations_output_dir=simulations_output_dir,
+        map_data_x, his_data_x, files = get_data_from_simulation(
+            simulation_path=simulation_path,
             simulations_ts=simulations_ts,
             n_start=n_start,
         )

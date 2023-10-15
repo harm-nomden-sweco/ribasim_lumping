@@ -291,6 +291,25 @@ def generate_ribasim_pumps(ribasim_node_gdf: gpd.GeoDataFrame = None):
         print("   x no pumps")
     return pump
 
+def generate_ribasim_outlets(ribasim_node_gdf: gpd.GeoDataFrame = None):
+    """generate ribasim outlets for all outlet nodes""" 
+    print(" - create Ribasim outlets")
+
+    static_outlet = pd.DataFrame(
+        data={
+            "node_id": ribasim_node_gdf.loc[ribasim_node_gdf['type']=='Outlet'].index
+        }
+    )
+
+    static_outlet['flow_rate'] = 0.0 # Will be overwritten by PID controller
+
+    if not static_outlet.empty:
+        outlet = ribasim.Outlet(static=static_outlet)
+    else:
+        outlet=None
+        print("   x no outlets")
+
+    return outlet
 
 def generate_ribasim_manningresistances(
     ribasim_node_gdf: gpd.GeoDataFrame = None,
@@ -336,6 +355,7 @@ def generate_ribasimmodel(
     level_boundary = generate_ribasim_level_boundaries(boundaries_gdf)
     flow_boundary = generate_ribasim_flow_boundaries(boundaries_gdf)
     pump = generate_ribasim_pumps(ribasim_node_gdf)
+    outlet = generate_ribasim_outlets(ribasim_node_gdf)
     tabulated_rating_curve = generate_ribasium_tabulatedratingcurves(ribasim_node_gdf, dummyvalue=5.5)
     manning_resistance = generate_ribasim_manningresistances(ribasim_node_gdf, dummyvalue=5.5)
 
@@ -347,6 +367,7 @@ def generate_ribasimmodel(
         level_boundary=level_boundary,
         flow_boundary=flow_boundary,
         pump=pump,
+        outlet=outlet,
         tabulated_rating_curve=tabulated_rating_curve,
         manning_resistance=manning_resistance,
         starttime="2020-01-01 00:00:00",
