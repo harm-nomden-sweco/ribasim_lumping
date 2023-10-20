@@ -18,7 +18,7 @@ def generate_ribasim_nodes(
     (pump as Pump, manual and culvert as ManningResistance, all others as TabulatedRatingcurve)
     returns ribasim node and boundaries, splitnodes and ribasim nodes as gdf's with ribsasim node-id column"""
     print(" - create Ribasim nodes")
-    basins_gdf =basins.copy()
+    basins_gdf = basins.copy()
     basins_gdf['node_id'] = basins_gdf['basin'] 
     basins_gdf['type'] = 'Basin'
 
@@ -26,13 +26,12 @@ def generate_ribasim_nodes(
         print(f"   * {len(split_nodes[split_nodes.status==False])} split_nodes resulting in no_split (removed)")
         split_nodes = split_nodes[split_nodes.status==True]
 
-
     if boundaries is None:
         boundaries_gdf = None
         len_boundaries = 0
     else:
         boundaries_gdf = boundaries.copy()
-        boundaries_gdf['node_id'] = boundaries_gdf['boundary_id'] + len(basins) +1
+        boundaries_gdf['node_id'] = boundaries_gdf.index + len(basins) + 1
         boundary_conversion = {
             'dischargebnd': 'FlowBoundary', 
             'waterlevelbnd': 'LevelBoundary'
@@ -60,9 +59,9 @@ def generate_ribasim_nodes(
 
     if isinstance(split_node_id_conversion, Dict):
         for key, value in split_node_id_conversion.items():
-            if len(splitnodes_gdf[splitnodes_gdf['mesh1d_node_id'] == key]) == 0:
+            if len(splitnodes_gdf[splitnodes_gdf['node_id'] == key]) == 0:
                 print(f"   * split_node type conversion id={key} (type={value}) does not exist")
-            splitnodes_gdf.loc[splitnodes_gdf['mesh1d_node_id'] == key, 'type'] = value
+            splitnodes_gdf.loc[splitnodes_gdf['node_id'] == key, 'type'] = value
 
     # concat nodes
     ribasim_node_gdf = pd.concat([basins_gdf, boundaries_gdf,splitnodes_gdf]).set_crs(split_nodes.crs)
@@ -85,7 +84,7 @@ def generate_ribasim_edges(
 ):
     """generate ribasim edges between nodes, using basin connections and boundary-basin connections"""
     print(" - create Ribasim edges")
-    basin_connections_gdf = basin_connections[['mesh1d_node_id', 'mesh1d_nEdges', 'basin_in','basin_out','geometry']]
+    basin_connections_gdf = basin_connections[['node_id', 'edge_no', 'basin_in','basin_out','geometry']]
 
     # (1) nodes
     # merge to find splitnode id

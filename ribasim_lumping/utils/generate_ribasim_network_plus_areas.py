@@ -14,7 +14,6 @@ def create_graph_based_on_nodes_edges(
 ) -> nx.DiGraph:
     """create networkx graph based on geographic nodes and edges. 
     TODO: maybe a faster implementation possible"""
-    print(" - create network graph from nodes/edges")
     graph = nx.DiGraph()
     if nodes is not None:
         for i, node in nodes.iterrows():
@@ -22,6 +21,7 @@ def create_graph_based_on_nodes_edges(
     if edges is not None:
         for i, edge in edges.iterrows():
             graph.add_edge(edge.from_node, edge.to_node)
+    print(f" - create network graph from nodes ({len(nodes)}) and edges ({len(edges)}x)")
     return graph
 
 
@@ -31,13 +31,8 @@ def split_graph_based_on_split_nodes(
     edges_gdf: gpd.GeoDataFrame
 ) -> nx.DiGraph:
     """split networkx graph at split_edge or split_node"""
-    print(" - split network graph at split locations")
-
     # split on edge: delete edge, create 2 nodes, create 2 edges
     split_nodes_edges = split_nodes[split_nodes.edge_no!=-1].copy()
-    seen = set()
-    dupes = [x for x in split_nodes.edge_no.values if x in seen or seen.add(x)]
-    display(split_nodes[split_nodes.edge_no.isin(dupes)])
 
     split_edges = edges_gdf[edges_gdf.edge_no.isin(split_nodes_edges.edge_no.values)].copy()
     split_edges = split_edges[['from_node', 'to_node']].to_dict('tight')['data']
@@ -74,6 +69,7 @@ def split_graph_based_on_split_nodes(
             graph.add_node(new_node_id, pos=split_node_pos)
             new_edge_adj = [e if e != split_node_id else new_node_id for e in new_edge]
             graph.add_edge(new_edge_adj[0], new_edge_adj[1])
+    print(f" - split network graph at split locations ({len(split_nodes)}x)")
     return graph
 
 
@@ -84,7 +80,6 @@ def add_basin_code_from_network_to_nodes_and_edges(
     split_nodes: gpd.GeoDataFrame,
 ):
     """add basin (subgraph) code to nodes and edges"""
-    print(" - define numbers Ribasim-Basins and join edges/nodes")
     subgraphs = list(nx.weakly_connected_components(graph))
     if nodes is None or edges is None:
         return None, None
@@ -98,12 +93,12 @@ def add_basin_code_from_network_to_nodes_and_edges(
             "basin",
         ] = i+1
         nodes.loc[nodes["node_no"].isin(list(subgraph)), "basin"] = i+1
+    print(f" - define numbers Ribasim-Basins ({len(subgraphs)}x) and join edges/nodes")
     return nodes, edges
 
 
 def check_if_split_node_is_used(split_nodes, nodes, edges):
     """check whether split_nodes are used, split_nodes and split_edges"""
-    print(" - check whether each split location results in a split")
     split_nodes['status'] = True
 
     # check if edges connected to split_nodes have the same basin code
@@ -131,6 +126,7 @@ def check_if_split_node_is_used(split_nodes, nodes, edges):
     split_nodes['object_type'] = split_nodes['object_type'].fillna('manual')
     split_nodes['split_type'] = split_nodes['object_type']
     split_nodes.loc[~split_nodes.status, 'split_type'] = 'no_split'
+    print(f" - check whether each split location results in a split ({len(split_edges_not_used)} not used)")
     return split_nodes
 
 
@@ -139,7 +135,6 @@ def create_basin_areas_based_on_drainage_areas(
 ):
     """find areas with spatial join on edges. add subgraph code to areas
     and combine all areas with certain subgraph code into one basin"""
-    print(" - define for each Ribasim-Basin the related basin area")
     if areas is None:
         return None, None
     else:
@@ -168,12 +163,12 @@ def create_basin_areas_based_on_drainage_areas(
     basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=['area'])
     basin_areas['basin'] = basin_areas['basin'].astype(int)
     basin_areas['area_ha'] = basin_areas.geometry.area / 10000.0
+    print(f" - define for each Ribasim-Basin the related basin area ({len(basin_areas)}x)")
     return areas, basin_areas
 
 
 def create_basins_based_on_subgraphs_and_nodes(graph, nodes):
     """create basin nodes based on basin_areas or nodes"""
-    print(" - create final locations Ribasim-Basins")
     connected_components = list(nx.weakly_connected_components(graph))
     centralities = {}
 
@@ -190,6 +185,7 @@ def create_basins_based_on_subgraphs_and_nodes(graph, nodes):
     tmp = nodes.merge(centralities, how='outer', left_on='node_no', right_on='node_id')
     tmp = tmp[tmp['basin']!=-1].sort_values(by=['basin', 'centrality'], ascending=[True, False])
     basins = tmp.groupby(by='basin').first().reset_index().set_crs(nodes.crs)
+    print(f" - create final locations Ribasim-Basins ({len(basins)})")
     return basins
 
 
@@ -224,7 +220,6 @@ def create_basin_connections(
         crs: int = 28992,
     ) -> gpd.GeoDataFrame:
     """create basin connections"""
-    print(" - create Ribasim-Edges between Basins and split locations")
     conn = split_nodes[
         ['node_no','geometry', 'split_type', 'name', 'edge_no']
     ].rename(columns={"geometry":"geom_split_node"})
@@ -345,71 +340,86 @@ def create_basin_connections(
     basin_connections_gdf = pd.concat([conn_edge_gdf, conn_node_gdf])
     
     basin_connections_gdf = basin_connections_gdf.drop(columns=['geom_basin_in','geom_basin_out','geom_split_node_out'])
+    print(f" - create Ribasim-Edges between Basins and split locations ({len(basin_connections_gdf)}x)")
     return basin_connections_gdf
 
 
 def create_boundary_connections(
         boundaries: gpd.GeoDataFrame, 
         nodes: gpd.GeoDataFrame, 
+        edges: gpd.GeoDataFrame, 
         basins: gpd.GeoDataFrame,
     ) -> gpd.GeoDataFrame:
     """create boundary-basin connections"""
-    print(" - create Ribasim-Edges between Boundary and Basin")
+    print(f" - create Ribasim-Edges between Boundaries and Basins")
     if boundaries is None or nodes is None or basins is None:
         return None
-    display(boundaries)
-    # merge boundaries with edges 
-    boundary_conn = boundaries.rename(columns={"geometry":"geometry_boundary"})
-    boundary_conn_us = boundary_conn.merge(
-        nodes[['node_id', 'basin']], 
-        left_on='node_id', 
-        right_on='node_id'
-    )
-    boundary_conn_ds = boundary_conn.merge(
-        nodes[['node_id', 'basin']], 
-        left_on='node_id', 
-        right_on='node_id'
-    )
 
-    # merge with basins for geometry
-    # downstream
-    boundary_conn_ds = boundary_conn_ds.merge(
-        basins[['basin', 'geometry']], 
-        left_on='basin', 
+    # merge boundaries with nodes and basins
+    boundaries_conn = boundaries.rename(columns={"geometry": "geometry_boundary"})
+    boundaries_conn = boundaries_conn.merge(
+        nodes[['node_id', 'basin']], 
+        left_on='boundary_id', 
+        right_on='node_id'
+    ).merge(
+        basins[['basin', 'geometry']],
+        left_on='basin',
         right_on='basin'
-    ).rename(columns={"geometry":"geometry_basin"})
-    boundary_conn_ds['boundary_location'] = 'downstream'
-    boundary_conn_ds['geometry'] = boundary_conn_ds.apply(
-        lambda row: LineString([row['geometry_basin'], row['geometry_boundary']]), 
-        axis=1
-    )
-    boundary_conn_ds = gpd.GeoDataFrame(boundary_conn_ds, geometry='geometry', crs=28992)
+    ).rename(columns={"geometry": "geometry_basin"})
+    
+    waterlevelbnd = boundaries_conn[boundaries_conn.quantity=='waterlevelbnd']
+    if ~waterlevelbnd.empty:
+        def midpoint(p1, p2):
+            return Point((p1.x+p2.x)/2, (p1.y+p2.y)/2)
+        waterlevelbnd.loc[:, "midpoint"] = waterlevelbnd.apply(
+            lambda row: midpoint(row["geometry_boundary"], row["geometry_basin"]), 
+            axis=1
+        )
 
-    # upstream
-    boundary_conn_us = boundary_conn_us.merge(
-        basins[['basin', 'geometry']], 
-        left_on='basin', 
-        right_on='basin',
-    ).rename(columns={"geometry":"geometry_basin"})
-    boundary_conn_us['boundary_location'] = 'upstream'
-    boundary_conn_us['geometry'] = boundary_conn_us.apply(
-        lambda row: LineString([row['geometry_boundary'], row['geometry_basin']]), 
-        axis=1
-    )
-    boundary_conn_us = gpd.GeoDataFrame(boundary_conn_us, geometry='geometry', crs=28992)
+    waterlevelbnd_ds1 = waterlevelbnd[waterlevelbnd.node_no.isin(edges.to_node)]
+    waterlevelbnd_ds2 = waterlevelbnd_ds1.copy()
+    if ~waterlevelbnd_ds1.empty:
+        waterlevelbnd_ds1.loc[:, "geometry"] = waterlevelbnd_ds1.apply(
+            lambda row: LineString([row["geometry_basin"], row["geometry_boundary"]]), 
+            axis=1
+        )
+        waterlevelbnd_ds2.loc[:, "geometry"] = waterlevelbnd_ds2.apply(
+            lambda row: LineString([row["geometry_basin"], row["geometry_boundary"]]), 
+            axis=1
+        )
+    waterlevelbnd_us1 = waterlevelbnd[waterlevelbnd.node_no.isin(edges.from_node)]
+    waterlevelbnd_us2 = waterlevelbnd_us1.copy()
+    if ~waterlevelbnd_us1.empty:
+        waterlevelbnd_us1.loc[:, "geometry"] = waterlevelbnd_us1.apply(
+            lambda row: LineString([row["geometry_boundary"], row["midpoint"]]), 
+            axis=1
+        )
+        waterlevelbnd_us2.loc[:, "geometry"] = waterlevelbnd_us2.apply(
+            lambda row: LineString([row["geometry_boundary"], row["geometry_basin"]]), 
+            axis=1
+        )
+    
+    dischargebnd = boundaries_conn[boundaries_conn.quantity=='dischargebnd']
+    if dischargebnd.empty:
+        dischargebnd["geometry"] = None
+    else:
+        dischargebnd.loc[:, "geometry"] = dischargebnd.apply(
+            lambda row: LineString([row["geometry_boundary"], row["geometry_basin"]]), 
+            axis=1
+        )
 
-    # concat us and ds
-    boundary_conn_gdf = pd.concat([boundary_conn_us, boundary_conn_ds])
+    boundaries_connections = gpd.GeoDataFrame(pd.concat([
+        waterlevelbnd_ds1, 
+        waterlevelbnd_ds2, 
+        waterlevelbnd_us1, 
+        waterlevelbnd_us2, 
+        dischargebnd
+    ], ignore_index=True))
+    boundaries_connections = boundaries_conn.drop(["geometry_boundary", "geometry_basin"], axis=1)
+    return boundaries_connections
 
-    boundary_conn_gdf = boundary_conn_gdf.drop(columns=['geometry_boundary','geometry_basin'])
-    boundary_conn_gdf.insert(0, 'boundary_conn_id', range(len(boundary_conn_gdf)))
-    boundary_conn_gdf = boundary_conn_gdf[
-        ['boundary_conn_id', 'network_node_id', 'basin', 'boundary_location', 'geometry']
-    ]
-    return boundary_conn_gdf
 
-
-def create_basins_and_connections_using_split_nodes(
+def generate_ribasim_network_using_split_nodes(
     nodes: gpd.GeoDataFrame,
     edges: gpd.GeoDataFrame,
     split_nodes: gpd.GeoDataFrame,
@@ -431,7 +441,7 @@ def create_basins_and_connections_using_split_nodes(
     basins = create_basins_based_on_subgraphs_and_nodes(network_graph, nodes)
     areas, basin_areas = create_basin_areas_based_on_drainage_areas(edges, areas)
     nodes, edges = check_if_nodes_edges_within_basin_areas(nodes, edges, basin_areas)
-    boundary_connections = create_boundary_connections(boundaries, nodes, basins)
+    boundary_connections = create_boundary_connections(boundaries, nodes, edges, basins)
     basin_connections = create_basin_connections(split_nodes, edges, nodes, basins, crs)
 
     return dict(
@@ -445,4 +455,3 @@ def create_basins_and_connections_using_split_nodes(
         basin_connections=basin_connections,
         boundary_connections=boundary_connections
     )
-
