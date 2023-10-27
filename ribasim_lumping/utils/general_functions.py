@@ -7,7 +7,8 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from pydantic import BaseModel
-from shapely.ops import nearest_points
+from shapely.ops import nearest_points, snap
+from shapely.geometry import LineString, Point
 
 
 def replace_string_in_file(file_path, string, new_string):
@@ -60,6 +61,17 @@ def read_ini_file_with_similar_sections(file_path, section_name):
     section_keys = [k for k in config.keys() if k.startswith(section_name)]
     section_name_df = pd.DataFrame([config._sections[k]  for k in section_keys])
     return section_name_df
+
+
+def get_point_parallel_to_line_near_point(
+    line: LineString, 
+    reference_point: Point, 
+    side: str = 'left', 
+    distance: int = 5
+):
+    parallel_line = line.parallel_offset(distance, 'left')
+    new_point = snap(reference_point, parallel_line, distance*1.1)
+    return new_point
 
 
 def get_points_on_linestrings_based_on_distances(
