@@ -3,13 +3,15 @@ Read network locations from D-Hydro simulation
 Harm Nomden (Sweco)
 """
 from pathlib import Path
+import subprocess
 import configparser
 import pandas as pd
 import geopandas as gpd
-import hydrolib.core.dflowfm as hcdfm
 from shapely.geometry import Point, LineString
 import xarray as xr
-from .general_functions import find_file_in_directory, \
+import xugrid as xu
+import hydrolib.core.dflowfm as hcdfm
+from ..utils.general_functions import find_file_in_directory, \
     find_directory_in_directory, get_points_on_linestrings_based_on_distances, \
         replace_string_in_file, read_ini_file_with_similar_sections, find_nearest_edges_no
 
@@ -38,6 +40,12 @@ def get_dhydro_files(simulation_path: Path):
     )
     input_files["obs_file"] = Path(mdu_dir, mdu["output"]["obsfile"])
 
+    volume_nc_file = Path(mdu_dir, "PerGridpoint_volume.nc")
+    if volume_nc_file.exists():
+        input_files['volume_file'] = volume_nc_file
+    else:
+        input_files['volume_file'] = ""
+
     output_dir = mdu["output"]["outputdir"]
     input_files["output_dir"] = Path(find_directory_in_directory(simulation_path, output_dir))
     input_files["output_his_file"] = Path(find_file_in_directory(simulation_path, "his.nc"))
@@ -55,15 +63,18 @@ def get_dhydro_branches_from_network_data(network_data, crs):
     """Get DHydro branches"""
     branch_keys = [b for b in network_data._mesh1d.branches.keys()]
     branch_geom = [b.geometry for b in network_data._mesh1d.branches.values()]
-    branches_df = pd.DataFrame({"branchid": branch_keys, "branchgeom": branch_geom})
+    branches_df = pd.DataFrame({
+        "branch_id": branch_keys, 
+        "branch_geom": branch_geom
+    })
     branches_df["geometry"] = branches_df.apply(
-        lambda row: LineString(row["branchgeom"]), axis=1
+        lambda row: LineString(row["branch_geom"]), axis=1
     )
     branches_gdf = gpd.GeoDataFrame(
         branches_df, 
         geometry="geometry", 
         crs=crs
-    ).drop("branchgeom", axis=1)
+    ).drop("branch_geom", axis=1)
     print(f" branches ({len(branches_gdf)}x)", end="", flush=True)
     return branches_gdf
 
@@ -94,6 +105,7 @@ def get_dhydro_nodes_from_network_data(network_data, crs):
     """Get DHydro nodes"""
     nodes_df = pd.DataFrame({
         "branch_id": network_data._mesh1d.mesh1d_node_branch_id,
+        "chainage": network_data._mesh1d.mesh1d_node_branch_offset,
         "node_id": network_data._mesh1d.mesh1d_node_id,
         "geometry": list(zip(network_data._mesh1d.mesh1d_node_x, network_data._mesh1d.mesh1d_node_y))
     })
@@ -108,6 +120,7 @@ def get_dhydro_edges_from_network_data(network_data, nodes_gdf, crs):
     """Get DHydro edges"""
     edges_df = pd.DataFrame({
         "branch_id": network_data._mesh1d.mesh1d_edge_branch_id,
+        "chainage": network_data._mesh1d.mesh1d_edge_branch_offset,
         "X": network_data._mesh1d.mesh1d_edge_x,
         "Y": network_data._mesh1d.mesh1d_edge_y,
         "from_node": network_data._mesh1d.mesh1d_edge_nodes[:, 0],
@@ -150,12 +163,14 @@ def get_dhydro_structures_locations(
     # get structure file (e.g. "structures.ini")
     print("  - structures:", end="", flush=True)
     m = hcdfm.structure.models.StructureModel(structures_file)
-    structures_df = pd.DataFrame([f.__dict__ for f in m.structure]).rename(columns={"id": "node_id"})
+    structures_df = pd.DataFrame([f.__dict__ for f in m.structure])
+    structures_df = structures_df.drop('name', axis=1)
+    structures_df = structures_df.rename({"branchid": "branch_id", "id": "structure_id"}, axis=1)
     structures_gdf = get_points_on_linestrings_based_on_distances(
         linestrings=branches_gdf,
-        linestring_id_column='branchid',
+        linestring_id_column='branch_id',
         points=structures_df,
-        points_linestring_id_column='branchid',
+        points_linestring_id_column='branch_id',
         points_distance_column='chainage'
     )
     structures_gdf = structures_gdf.rename(columns={"type": "object_type"})
@@ -173,9 +188,9 @@ def check_number_of_pumps_at_pumping_station(pumps_gdf: gpd.GeoDataFrame):
     Output: Geodataframe with one pump per location. 
             Total capacity (sum), Max start level, Min stop level"""
     pumps_gdf = pumps_gdf.groupby('name').agg(dict(
-        node_id='first',
-        name='first',
-        branchid='first', 
+        node_no='first',
+        id='first',
+        branch_id='first', 
         geometry='first',
         comments='first', 
         object_type='first',
@@ -241,23 +256,28 @@ def get_dhydro_external_forcing_locations(
     """Get all DHydro boundaries and laterals"""
     print("  - external forcing (locations):", end="", flush=True)
     
-    boundaries_gdf = read_ini_file_with_similar_sections(external_forcing_file, 'Boundary')
-    boundaries_gdf = network_nodes_gdf[['network_node_id', 'geometry']].merge(
-        boundaries_gdf.rename(columns={'nodeid': 'boundary_id'}), 
-        how='inner', 
-        left_on='network_node_id', 
-        right_on='boundary_id'
-    ).sjoin(nodes_gdf[["node_no", "geometry"]]).drop(['network_node_id', 'index_right'], axis=1)
+    boundaries_gdf = read_ini_file_with_similar_sections(external_forcing_file, "Boundary")
+    boundaries_gdf = boundaries_gdf.rename({"nodeid": "network_node_id"}, axis=1)
+    boundaries_gdf = network_nodes_gdf[["network_node_id", "geometry"]].merge(
+        boundaries_gdf, 
+        how="inner", 
+        left_on="network_node_id", 
+        right_on="network_node_id"
+    ).sjoin(nodes_gdf[["node_no", "geometry"]]).drop(["index_right"], axis=1)
+    boundaries_gdf = boundaries_gdf.reset_index(drop=True)
+    boundaries_gdf.insert(0, "boundary", boundaries_gdf.index + 1)
+    boundaries_gdf = boundaries_gdf.rename(columns={"network_node_id": "name"})
     print(f" boundaries ({len(boundaries_gdf)}x)", end="", flush=True)
 
-    laterals_gdf = read_ini_file_with_similar_sections(external_forcing_file, 'Lateral')
-    laterals_gdf['chainage'] = laterals_gdf['chainage'].astype(float)
+    laterals_gdf = read_ini_file_with_similar_sections(external_forcing_file, "Lateral")
+    laterals_gdf["chainage"] = laterals_gdf["chainage"].astype(float)
+    laterals_gdf = laterals_gdf.rename({"branchid": "branch_id"}, axis=1)
     laterals_gdf = get_points_on_linestrings_based_on_distances(
         linestrings=branches_gdf,
-        linestring_id_column='branchid',
+        linestring_id_column="branch_id",
         points=laterals_gdf,
-        points_linestring_id_column='branchid',
-        points_distance_column='chainage'
+        points_linestring_id_column="branch_id",
+        points_distance_column="chainage"
     )
     print(f" laterals ({len(laterals_gdf)}x)")
     return boundaries_gdf, laterals_gdf
@@ -280,7 +300,6 @@ def get_dhydro_forcing_data(
             boundaries_data = pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])
         else:
             boundaries_data = pd.concat([boundaries_data, pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])])
-    boundaries_data = boundaries_data.rename({'name': 'boundary_id'})
     
     print(" laterals")
     laterals_data = None
@@ -292,11 +311,33 @@ def get_dhydro_forcing_data(
             laterals_data = pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])
         else:
             laterals_data = pd.concat([laterals_data, pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])])
-    laterals_data = laterals_data.rename({'name': 'boundary_id'})
     return boundaries_data, laterals_data
 
+def get_dhydro_volume_based_on_basis_simulations(
+    mdu_input_dir: Path,
+    volume_tool_bat_file: Path, 
+    volume_tool_force: bool = False,
+    volume_tool_increment: float = 0.1
+):
+    mdu_file = find_file_in_directory(mdu_input_dir, ".mdu")
+    volume_nc_file = find_file_in_directory(mdu_input_dir, "PerGridpoint_volume.nc")
+    if volume_nc_file == "" or volume_tool_force:
+        subprocess.Popen(
+            f'"{volume_tool_bat_file}" --mdufile "{mdu_file.name}" --increment {str(volume_tool_increment)} --outputfile volume.nc --output "All"', cwd=str(mdu_file.parent)
+        )
+        print("  - volume_tool: new level-volume dataframe created")
+    else:
+        print("  - volume_tool: file already exists, use force=True to force recalculation volume")
+    volume = xu.open_dataset(volume_nc_file)
+    return volume
 
-def get_dhydro_data_from_simulation(simulation_path: Path, crs):
+def get_dhydro_data_from_simulation(
+    simulation_path: Path, 
+    volume_tool_bat_file: Path, 
+    volume_tool_force: bool = False,
+    volume_tool_increment: float = 0.1,
+    crs: int = 28992,
+):
     """Get DHydro data from simulation"""
     network_data = None
     network_nodes_gdf = None
@@ -320,25 +361,32 @@ def get_dhydro_data_from_simulation(simulation_path: Path, crs):
     edges_gdf = get_dhydro_edges_from_network_data(network_data, nodes_gdf, crs)
 
     structures_gdf = get_dhydro_structures_locations(
-        files['structure_file'], 
-        branches_gdf, 
-        edges_gdf
+        structures_file=files['structure_file'], 
+        branches_gdf=branches_gdf, 
+        edges_gdf=edges_gdf
     )
     structures_dict = split_dhydro_structures(structures_gdf)
 
     boundaries_gdf, laterals_gdf = get_dhydro_external_forcing_locations(
-        files['external_forcing_file'], 
-        branches_gdf, 
-        network_nodes_gdf, 
-        nodes_gdf
+        external_forcing_file=files['external_forcing_file'], 
+        branches_gdf=branches_gdf, 
+        network_nodes_gdf=network_nodes_gdf, 
+        nodes_gdf=nodes_gdf
     )
     mdu_input_dir = Path(files['mdu_file']).parent
     boundaries_data, laterals_data = get_dhydro_forcing_data(
-        mdu_input_dir, 
-        boundaries_gdf, 
-        laterals_gdf
+        mdu_input_dir=mdu_input_dir, 
+        boundaries_gdf=boundaries_gdf, 
+        laterals_gdf=laterals_gdf
     )
     
+    volume_data = get_dhydro_volume_based_on_basis_simulations(
+        mdu_input_dir=mdu_input_dir, 
+        volume_tool_bat_file=volume_tool_bat_file, 
+        volume_tool_force=volume_tool_force,
+        volume_tool_increment=volume_tool_increment
+    )
+
     results = dict(
         network_data=network_data,
         network_nodes_gdf=network_nodes_gdf,
@@ -351,7 +399,8 @@ def get_dhydro_data_from_simulation(simulation_path: Path, crs):
         boundaries_gdf=boundaries_gdf,
         laterals_gdf=laterals_gdf,
         laterals_data=laterals_data,
-        boundaries_data=boundaries_data
+        boundaries_data=boundaries_data,
+        volume_data=volume_data
     )
 
     return results

@@ -18,13 +18,17 @@ def replace_string_in_file(file_path, string, new_string):
         file.write(content)
 
 
-def find_file_in_directory(directory, file_name) -> Path:
+def find_file_in_directory(directory, file_name, start_end='end') -> Path:
     """Find path of file in directory"""
     selected_file = ""
     for root, dirs, files in os.walk(directory):
         for file in files:
-            if file.endswith(file_name):
-                selected_file = os.path.join(root, file)
+            if start_end == 'end':
+                if file.endswith(file_name):
+                    selected_file = os.path.join(root, file)
+            elif start_end == 'start':
+                if file.startswith(file_name):
+                    selected_file = os.path.join(root, file)
     return Path(selected_file)
 
 

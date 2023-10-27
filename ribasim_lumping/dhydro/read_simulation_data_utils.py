@@ -9,7 +9,7 @@ import dfm_tools as dfmt
 import xarray as xr
 import xugrid as xu
 import hydrolib.core.dflowfm as hcdfm
-from .read_dhydro_network_locations import get_dhydro_files
+from .read_dhydro_network import get_dhydro_files
 
 
 def get_simulation_names_from_dir(path_dir=None) -> List[str]:
