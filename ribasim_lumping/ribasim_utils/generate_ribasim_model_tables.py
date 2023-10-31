@@ -31,14 +31,13 @@ def generate_basin_time_table(basins, basin_areas, start_date="2020-01-01", end_
     precipitation = (
         rng.lognormal(mean=-1.0, sigma=1.7, size=time.size) * 0.001 / seconds_per_day
     )
-    basin_areas_m2 = basin_areas.set_index('basin')
-    basin_areas_m2['area_m2'] = basin_areas_m2['area_ha'] * 10000.0
+    basin_areas_ha = basin_areas.set_index('node_id')
 
     timeseries = pd.DataFrame()
     for basin_no in basins.node_id.values:
-        if basin_no in basin_areas_m2.index:
-            area = basin_areas_m2.loc[basin_no, 'area_m2']
-            drainage = 0.5 / 1000 * area
+        if basin_no in basin_areas_ha.index:
+            area = basin_areas_ha.loc[basin_no, 'area_ha']
+            drainage = 4.0 / 1000 * area
         else:
             drainage = 0.0
         timeseries = pd.concat([

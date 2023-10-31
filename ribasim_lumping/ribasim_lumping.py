@@ -453,5 +453,15 @@ class RibasimLumpingNetwork(BaseModel):
                 transform=ax.transAxes, fontsize=15
             )
 
+    def read_ribasim_results(self, simulation_code: str):
+        simulation_path = Path(self.results_dir, simulation_code)
+        def read_arrow_file(name: str):
+            arrow_file = Path(simulation_path, 'results', f"{name}.arrow")
+            return pd.read_feather(arrow_file)
+        basin_df = read_arrow_file('basin')
+        control_df = read_arrow_file('control')
+        flow_df = read_arrow_file('flow')
+        return basin_df, control_df, flow_df
+
 def create_ribasim_lumping_network(**kwargs):
     return RibasimLumpingNetwork(**kwargs)
