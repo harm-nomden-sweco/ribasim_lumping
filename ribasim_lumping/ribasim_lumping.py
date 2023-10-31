@@ -58,6 +58,7 @@ class RibasimLumpingNetwork(BaseModel):
     laterals_gdf: gpd.GeoDataFrame = None
     boundaries_data: pd.DataFrame = None
     laterals_data: pd.DataFrame = None
+    simulation_code: str = None
     basin_areas_gdf: gpd.GeoDataFrame = None
     basins_gdf: gpd.GeoDataFrame = None
     split_nodes: gpd.GeoDataFrame = None
@@ -208,11 +209,34 @@ class RibasimLumpingNetwork(BaseModel):
             return None
         return list(self.split_nodes.node_no.values)
 
+    def generate_ribasim_lumping_model(
+        self,
+        simulation_code: str,
+        set_name: str,
+        split_node_type_conversion: Dict,
+        split_node_id_conversion: Dict,
+        starttime: str = None,
+        endtime: str = None,
+    ):
+        self.generate_ribasim_lumping_network(
+            simulation_code=simulation_code,
+            split_node_type_conversion=split_node_type_conversion,
+            split_node_id_conversion=split_node_id_conversion,
+        )
+        ribasim_model = self.generate_ribasim_model_complete(
+            set_name=set_name,
+            starttime=starttime,
+            endtime=endtime
+        )
+        return ribasim_model
+
     def generate_ribasim_lumping_network(
         self,
+        simulation_code: str,
         split_node_type_conversion: Dict,
         split_node_id_conversion: Dict,
     ) -> Dict:
+        self.simulation_code = simulation_code
         if self.split_nodes is None:
             raise ValueError("no split_nodes defined: use .add_split_nodes()")
         if self.nodes_gdf is None or self.edges_gdf is None:
@@ -247,11 +271,12 @@ class RibasimLumpingNetwork(BaseModel):
         self.network_graph = results['network_graph']
         self.basin_connections_gdf = results['basin_connections']
         self.boundary_connections_gdf = results['boundary_connections']
+        # Export to geopackage
+        self.export_to_geopackage(simulation_code=simulation_code)
         return results
 
     def generate_ribasim_model_complete(
         self, 
-        simulation_code: str,
         set_name: str,
         starttime: str = None,
         endtime: str = None
@@ -298,7 +323,7 @@ class RibasimLumpingNetwork(BaseModel):
 
         # generate ribasim model
         ribasim_model = generate_ribasim_model(
-            simulation_code=simulation_code,
+            simulation_code=self.simulation_code,
             basins=self.basins_gdf.copy(),
             split_nodes=self.split_nodes.copy(),
             boundaries=self.boundaries_gdf.copy(),
@@ -310,10 +335,9 @@ class RibasimLumpingNetwork(BaseModel):
         )
         self.ribasim_model = ribasim_model
 
-        # Export to geopackage
-        self.export_to_geopackage(simulation_code=simulation_code)
         # Export ribasim model
-        ribasim_model.write(Path(self.results_dir, simulation_code))
+        ribasim_model.write(Path(self.results_dir, self.simulation_code))
+        print(f"Export location: {Path(self.results_dir, self.simulation_code)}")
         return ribasim_model
 
     def export_to_geopackage(self, simulation_code: str, results_dir: Union[Path, str] = None):
