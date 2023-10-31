@@ -12,7 +12,7 @@ import xarray as xr
 import xugrid as xu
 import hydrolib.core.dflowfm as hcdfm
 from ..utils.general_functions import find_file_in_directory, \
-    find_directory_in_directory, get_points_on_linestrings_based_on_distances, \
+    find_directory_in_directory, find_nearest_nodes, get_points_on_linestrings_based_on_distances, \
         replace_string_in_file, read_ini_file_with_similar_sections, find_nearest_edges_no
 
 
@@ -21,7 +21,7 @@ def get_dhydro_files(simulation_path: Path):
     input_files = dict()
     mdu_file = ""
     mdu_file = find_file_in_directory(simulation_path, ".mdu")
-    print(f"  - MDU-file: {mdu_file}")
+    # print(f"  - MDU-file: {mdu_file}")
 
     replace_string_in_file(mdu_file, "*\n", "# *\n")
     mdu = configparser.ConfigParser()
@@ -187,9 +187,8 @@ def check_number_of_pumps_at_pumping_station(pumps_gdf: gpd.GeoDataFrame):
     Input:  Geodataframe with pumps with multiple per location
     Output: Geodataframe with one pump per location. 
             Total capacity (sum), Max start level, Min stop level"""
-    pumps_gdf = pumps_gdf.groupby('name').agg(dict(
-        node_no='first',
-        id='first',
+    pumps_gdf = pumps_gdf.groupby(pumps_gdf.geometry.to_wkt(), as_index=False).agg(dict(
+        structure_id='first',
         branch_id='first', 
         geometry='first',
         comments='first', 
@@ -258,12 +257,17 @@ def get_dhydro_external_forcing_locations(
     
     boundaries_gdf = read_ini_file_with_similar_sections(external_forcing_file, "Boundary")
     boundaries_gdf = boundaries_gdf.rename({"nodeid": "network_node_id"}, axis=1)
+    boundaries_gdf["network_node_id"] = boundaries_gdf["network_node_id"].astype(str)
+    network_nodes_gdf["network_node_id"] = network_nodes_gdf["network_node_id"].astype(str)
+
     boundaries_gdf = network_nodes_gdf[["network_node_id", "geometry"]].merge(
         boundaries_gdf, 
-        how="inner", 
+        how="right", 
         left_on="network_node_id", 
         right_on="network_node_id"
-    ).sjoin(nodes_gdf[["node_no", "geometry"]]).drop(["index_right"], axis=1)
+    )
+    boundaries_gdf = boundaries_gdf.sjoin(find_nearest_nodes(boundaries_gdf, nodes_gdf, "node_no"))
+    
     boundaries_gdf = boundaries_gdf.reset_index(drop=True)
     boundaries_gdf.insert(0, "boundary", boundaries_gdf.index + 1)
     boundaries_gdf = boundaries_gdf.rename(columns={"network_node_id": "name"})
@@ -325,7 +329,7 @@ def get_dhydro_volume_based_on_basis_simulations(
         subprocess.Popen(
             f'"{volume_tool_bat_file}" --mdufile "{mdu_file.name}" --increment {str(volume_tool_increment)} --outputfile volume.nc --output "All"', cwd=str(mdu_file.parent)
         )
-        print("  - volume_tool: new level-volume dataframe created")
+        print(f"  - volume_tool: new level-volume dataframe created: {volume_nc_file.name}")
     else:
         print("  - volume_tool: file already exists, use force=True to force recalculation volume")
     volume = xu.open_dataset(volume_nc_file)

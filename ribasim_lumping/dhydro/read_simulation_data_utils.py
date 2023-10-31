@@ -80,6 +80,7 @@ def get_data_from_simulations_set(
     - replaces simulation timestamp with condition (int)
     Returns: map_data (edges/nodes), his_data (structures) and boundary data, all simulations combined 
     """
+    print(f"Read D-HYDRO simulations sets")
     his_data = None
     map_data = None
     # boundary_data = None
@@ -88,7 +89,7 @@ def get_data_from_simulations_set(
     for simulation_name in simulations_names:
         simulation_path = Path(simulations_dir, simulation_name)
         print(
-            f" Simulation set ({set_name}): {simulation_name} | Timestamps: {len(simulations_ts)} | his.nc and map.nc"
+            f" - Simulation set ({set_name}): {simulation_name} | Timestamps: {len(simulations_ts)} | his.nc and map.nc"
         )
         files, map_data_x, his_data_x = get_data_from_simulation(
             simulation_path=simulation_path,

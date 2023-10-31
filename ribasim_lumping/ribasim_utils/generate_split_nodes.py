@@ -127,7 +127,7 @@ def add_split_nodes_based_on_selection(
     split_nodes["node_no"] = -1
     split_nodes = split_nodes.reset_index(drop=True)
     split_nodes.insert(0, "split_node", split_nodes.index + 1)
-
+    
     # print content of all split_nodes included
     print(f"{len(split_nodes)} split locations")
     for obj_type in split_nodes.object_type.unique():
