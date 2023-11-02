@@ -1,6 +1,7 @@
 from typing import List
-import pandas as pd
+
 import geopandas as gpd
+import pandas as pd
 
 
 def get_split_nodes_based_on_type(
@@ -28,7 +29,7 @@ def get_split_nodes_based_on_type(
         False
     ]
     split_nodes_columns = [
-        "node_no", "edge_no", "split_node_id", "geometry", "object_type", "split_type"
+        "node_no", "edge_no", "split_node_id", "geometry", "object_type", "split_type", "code"
     ]
     split_nodes = gpd.GeoDataFrame(
         columns=split_nodes_columns,

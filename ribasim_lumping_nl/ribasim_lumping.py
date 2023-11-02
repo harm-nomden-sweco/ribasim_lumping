@@ -1,29 +1,36 @@
 # pylint: disable=missing-function-docstring
-import sys
 import os
-from pathlib import Path
-from typing import List, Union, Dict
 import shutil
-import matplotlib.pyplot as plt
 import subprocess
-from pydantic import BaseModel
+import sys
+from pathlib import Path
+from typing import Dict, List, Union
+
 import geopandas as gpd
+import matplotlib.pyplot as plt
+import networkx as nx
 import pandas as pd
 import xarray as xr
 import xugrid as xu
-import networkx as nx
-from .utils.general_functions import find_file_in_directory
-from .dhydro.read_dhydro_network import get_dhydro_volume_based_on_basis_simulations
-from .dhydro.read_dhydro_simulations import add_dhydro_basis_network, add_dhydro_simulation_data
-from .ribasim_utils.generate_split_nodes import add_split_nodes_based_on_selection
-from .ribasim_utils.generate_ribasim_network import generate_ribasim_network_using_split_nodes
-from .ribasim_utils.export_load_split_nodes import (
-    write_structures_to_excel,
-    read_structures_from_excel,
-)
+from pydantic import BaseModel
+
+from .dhydro.read_dhydro_network import \
+    get_dhydro_volume_based_on_basis_simulations
+from .dhydro.read_dhydro_simulations import (add_dhydro_basis_network,
+                                             add_dhydro_simulation_data)
+from .hydamo.read_hydamo_network import add_hydamo_basis_network
+from .ribasim_utils.export_load_split_nodes import (read_structures_from_excel,
+                                                    write_structures_to_excel)
 from .ribasim_utils.generate_ribasim_model import generate_ribasim_model
-from .ribasim_utils.generate_ribasim_model_preprocessing import preprocessing_ribasim_model_tables
-from .ribasim_utils.generate_ribasim_model_tables import generate_ribasim_model_tables
+from .ribasim_utils.generate_ribasim_model_preprocessing import \
+    preprocessing_ribasim_model_tables
+from .ribasim_utils.generate_ribasim_model_tables import \
+    generate_ribasim_model_tables
+from .ribasim_utils.generate_ribasim_network import \
+    generate_ribasim_network_using_split_nodes
+from .ribasim_utils.generate_split_nodes import \
+    add_split_nodes_based_on_selection
+from .utils.general_functions import find_file_in_directory
 
 sys.path.append("..\\..\\ribasim\\python\\ribasim")
 import ribasim
@@ -33,8 +40,9 @@ class RibasimLumpingNetwork(BaseModel):
     """class to select datapoints from different simulations at certain timestamps"""
     name: str
     base_dir: Path
-    dhydro_basis_dir: Path
-    dhydro_results_dir: Path
+    # dhydro_basis_dir: Path
+    # dhydro_results_dir: Path
+    hydamo_basis_dir: Path
     results_dir: Path
     path_ribasim_executable: Path
     areas_gdf:gpd.GeoDataFrame = None
@@ -87,6 +95,7 @@ class RibasimLumpingNetwork(BaseModel):
     simulations_names: List[List] = []
     simulations_output_dirs: List[str] = []
     simulations_ts: List[Union[List, pd.DatetimeIndex]] = []
+    hydroobject_gdf: gpd.GeoDataFrame = None
     crs: int = 28992
 
     class Config:
@@ -100,10 +109,10 @@ class RibasimLumpingNetwork(BaseModel):
     def add_basis_network(
         self, 
         source_type: str, 
-        model_dir: Path,
-        set_name: str, 
-        simulation_name: str,
-        dhydro_volume_tool_bat_file: Path, 
+        model_dir: Path = None,
+        set_name: str = None, 
+        simulation_name: str = None,
+        dhydro_volume_tool_bat_file: Path = None, 
         dhydro_volume_tool_force: bool = False,
         dhydro_volume_tool_increment: float = 0.1
     ):
@@ -117,7 +126,7 @@ class RibasimLumpingNetwork(BaseModel):
                 volume_tool_force=dhydro_volume_tool_force,
                 volume_tool_increment=dhydro_volume_tool_increment
             )
-        
+
         self.basis_source_types.append(source_type)
         self.basis_set_names.append(set_name)
         self.basis_model_dirs.append(model_dir)
@@ -128,6 +137,14 @@ class RibasimLumpingNetwork(BaseModel):
                 self.nodes_gdf, self.boundaries_gdf, self.laterals_gdf, self.weirs_gdf, \
                 self.uniweirs_gdf, self.pumps_gdf, self.orifices_gdf, self.bridges_gdf, \
                 self.culverts_gdf, self.boundaries_data, self.laterals_data, self.volume_data = results
+            
+        if source_type == 'hydamo':
+            results = add_hydamo_basis_network(
+                hydamo_basis_dir=self.hydamo_basis_dir,
+            )
+        if results is not None:
+            self.weirs_gdf, self.culverts_gdf, self.hydroobject_gdf= results
+
         return results
 
     def add_simulation_set(
