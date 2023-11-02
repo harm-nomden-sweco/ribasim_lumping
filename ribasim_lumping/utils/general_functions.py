@@ -115,7 +115,7 @@ def find_nearest_edges_no(
     gdf2: gpd.GeoDataFrame,
     new_column: str
 ) -> gpd.GeoDataFrame: 
-    ind_gdf1, ind_gdf2  = gdf2['geometry'].sindex.nearest(gdf1['geometry'])
+    ind_gdf1, ind_gdf2  = gdf2['geometry'].sindex.nearest(gdf1['geometry'], return_all=False)
     gdf1[new_column] = ind_gdf2
     return gdf1
 

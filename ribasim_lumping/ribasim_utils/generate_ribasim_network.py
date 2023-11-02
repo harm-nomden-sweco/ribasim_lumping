@@ -564,7 +564,7 @@ def generate_ribasim_types_for_all_split_nodes(
     print(f" - define Ribasim-Nodes types based on input conversion table(s)")
     # Basins
     basins["ribasim_type"] = "Basin"
-    basins["name"] = basins["basin"].apply(lambda x: f"Basin{str(x)}")
+    basins["name"] = "Basin"
 
     # Boundaries
     boundary_conversion = {

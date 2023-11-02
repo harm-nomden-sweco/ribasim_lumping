@@ -24,13 +24,15 @@ def generate_basin_time_table(basins, basin_areas, start_date="2020-01-01", end_
     day_of_year = time.day_of_year.to_numpy()
     seconds_per_day = 24 * 60 * 60
 
-    evaporation = (
-        (-1.0 * np.cos(day_of_year / 365.0 * 2 * np.pi) + 1.0) * 0.0025 / seconds_per_day
-    )
-    rng = np.random.default_rng(seed=0)
-    precipitation = (
-        rng.lognormal(mean=-1.0, sigma=1.7, size=time.size) * 0.001 / seconds_per_day
-    )
+    evaporation = 0.0
+    precipitation = 0.0
+    # evaporation = (
+    #     (-1.0 * np.cos(day_of_year / 365.0 * 2 * np.pi) + 1.0) * 0.0025 / seconds_per_day
+    # )
+    # rng = np.random.default_rng(seed=0)
+    # precipitation = (
+    #     rng.lognormal(mean=-1.0, sigma=1.7, size=time.size) * 0.001 / seconds_per_day
+    # )
     basin_areas_ha = basin_areas.set_index('node_id')
 
     timeseries = pd.DataFrame()

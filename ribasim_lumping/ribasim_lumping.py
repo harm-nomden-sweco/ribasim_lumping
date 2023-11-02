@@ -36,6 +36,7 @@ class RibasimLumpingNetwork(BaseModel):
     dhydro_basis_dir: Path
     dhydro_results_dir: Path
     results_dir: Path
+    path_ribasim_executable: Path
     areas_gdf:gpd.GeoDataFrame = None
     his_data: xu.UgridDataset = None
     map_data: xu.UgridDataset = None
@@ -336,7 +337,11 @@ class RibasimLumpingNetwork(BaseModel):
         self.ribasim_model = ribasim_model
 
         # Export ribasim model
-        ribasim_model.write(Path(self.results_dir, self.simulation_code))
+        simulation_path = Path(self.results_dir, self.simulation_code)
+        ribasim_model.write(simulation_path)
+        with open(Path(simulation_path, "run_ribasim_model.bat"), 'w') as f:
+            f.write(f"{str(self.path_ribasim_executable)} ribasim.toml\n")
+            f.write(f"pause")
         print(f"Export location: {Path(self.results_dir, self.simulation_code)}")
         return ribasim_model
 
@@ -428,10 +433,11 @@ class RibasimLumpingNetwork(BaseModel):
 
         return structures_ids_to_include_as_splitnode, split_node_id_conversion
 
-    def plot_basin_waterlevels_based_on_node_nos(self, set_name: str, basins_nos: List[int]):
-
+    def plot_basin_waterlevels_for_basins(self, set_name: str, basins_nos: List[int]):
+        """A plot will be generated showing the bed level and waterlevels along node_no (x-axis)
+        input selected set_name and basin node_ids"""
         for basin_no in basins_nos:
-            basin_node_no = self.basins_gdf[self.basins_gdf['basin']==basin_no].node_no.values[0]
+            basin_node_no = self.basins_gdf[self.basins_gdf['node_id']==basin_no].node_no.values[0]
 
             fig, ax = plt.subplots()
             nodes_basin = self.nodes_gdf.groupby(by='basin').get_group(basin_no)
