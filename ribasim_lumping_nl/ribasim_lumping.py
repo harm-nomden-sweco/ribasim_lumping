@@ -63,6 +63,7 @@ class RibasimLumpingNetwork(BaseModel):
     bridges_gdf: gpd.GeoDataFrame = None
     culverts_gdf: gpd.GeoDataFrame = None
     uniweirs_gdf: gpd.GeoDataFrame = None
+    sluices_gdf: gpd.GeoDataFrame = None
     boundaries_gdf: gpd.GeoDataFrame = None
     laterals_gdf: gpd.GeoDataFrame = None
     boundaries_data: pd.DataFrame = None
@@ -95,6 +96,14 @@ class RibasimLumpingNetwork(BaseModel):
     simulations_names: List[List] = []
     simulations_output_dirs: List[str] = []
     simulations_ts: List[Union[List, pd.DatetimeIndex]] = []
+    stuw_gdf: gpd.GeoDataFrame = None
+    duikersifonhevel_gdf: gpd.GeoDataFrame = None
+    gemaal_gdf: gpd.GeoDataFrame = None
+    peilgebiedvigerend_gdf: gpd.GeoDataFrame = None
+    peilgebiedpraktijk_gdf: gpd.GeoDataFrame = None
+    afvoergebiedaanvoergebied_gdf: gpd.GeoDataFrame = None
+    afsluiter_gdf: gpd.GeoDataFrame = None
+    sluis_gdf: gpd.GeoDataFrame = None
     hydroobject_gdf: gpd.GeoDataFrame = None
     crs: int = 28992
 
@@ -110,6 +119,7 @@ class RibasimLumpingNetwork(BaseModel):
         self, 
         source_type: str, 
         model_dir: Path = None,
+        hydamo_basis_dir: Path = None,
         set_name: str = None, 
         simulation_name: str = None,
         dhydro_volume_tool_bat_file: Path = None, 
@@ -140,10 +150,14 @@ class RibasimLumpingNetwork(BaseModel):
             
         if source_type == 'hydamo':
             results = add_hydamo_basis_network(
-                hydamo_basis_dir=self.hydamo_basis_dir,
+                hydamo_basis_dir=hydamo_basis_dir,
             )
         if results is not None:
-            self.weirs_gdf, self.culverts_gdf, self.hydroobject_gdf= results
+            self.stuw_gdf, self.duikersifonhevel_gdf, self.gemaal_gdf, self.peilgebiedvigerend_gdf, \
+                self.peilgebiedpraktijk_gdf, self.afvoergebiedaanvoergebied_gdf, self.afsluiter_gdf, \
+                self.sluis_gdf, self.hydroobject_gdf,\
+                self.weirs_gdf, self.pumps_gdf, self.culverts_gdf, self.sluices_gdf,\
+                self.nodes_gdf, self.edges_gdf, self.network_graph = results
 
         return results
 
@@ -288,7 +302,7 @@ class RibasimLumpingNetwork(BaseModel):
         self.split_nodes = results['split_nodes']
         self.network_graph = results['network_graph']
         self.basin_connections_gdf = results['basin_connections']
-        self.boundary_connections_gdf = results['boundary_connections']
+        # self.boundary_connections_gdf = results['boundary_connections']
         # Export to geopackage
         self.export_to_geopackage(simulation_code=simulation_code)
         return results

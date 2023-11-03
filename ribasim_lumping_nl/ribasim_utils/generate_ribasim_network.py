@@ -1,9 +1,10 @@
-from typing import List, Dict, Any, Union, Optional, Tuple
-import numpy as np
-import pandas as pd
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import geopandas as gpd
 import networkx as nx
-from shapely.geometry import Point, LineString
+import numpy as np
+import pandas as pd
+from shapely.geometry import LineString, Point
 
 
 def create_graph_based_on_nodes_edges(
@@ -30,14 +31,12 @@ def split_graph_based_on_split_nodes(
     """split networkx graph at split_edge or split_node"""
     # split on edge: delete edge, create 2 nodes, create 2 edges
     split_nodes_edges = split_nodes[split_nodes.edge_no != -1].copy()
-
     split_edges = edges[
         edges.edge_no.isin(split_nodes_edges.edge_no.values)
     ].copy()
     split_edges = split_edges[["from_node", "to_node"]].to_dict("tight")["data"]
 
     split_edges = [coor for coor in split_edges if coor in graph.edges]
-
     graph.remove_edges_from(split_edges)
 
     split_nodes_edges["new_node_no1"] = (
@@ -49,7 +48,6 @@ def split_graph_based_on_split_nodes(
     split_nodes_edges["new_node_pos"] = split_nodes_edges.geometry.apply(
         lambda x: (x.x, x.y)
     )
-
     split_nodes_edges["upstream_node_no"] = [e[0] for e in split_edges]
     split_nodes_edges["downstream_node_no"] = [e[1] for e in split_edges]
 
@@ -657,28 +655,28 @@ def generate_ribasim_network_using_split_nodes(
         edges=edges,
         crs=crs
     )
-    boundary_connections, split_nodes = create_boundary_connections(
-        boundaries=boundaries,
-        split_nodes=split_nodes,
-        basins=basins,
-        nodes=nodes,
-        edges=edges
-    )
-    boundaries, split_nodes, basins, basin_areas = regenerate_node_ids(
-        boundaries=boundaries,
-        split_nodes=split_nodes,
-        basins=basins,
-        basin_connections=basin_connections,
-        boundary_connections=boundary_connections,
-        basin_areas=basin_areas,
-    )
-    boundaries, split_nodes, basins = generate_ribasim_types_for_all_split_nodes(
-        boundaries=boundaries, 
-        split_nodes=split_nodes, 
-        basins=basins, 
-        split_node_type_conversion=split_node_type_conversion, 
-        split_node_id_conversion=split_node_id_conversion
-    )
+    # boundary_connections, split_nodes = create_boundary_connections(
+    #     boundaries=boundaries,
+    #     split_nodes=split_nodes,
+    #     basins=basins,
+    #     nodes=nodes,
+    #     edges=edges
+    # )
+    # boundaries, split_nodes, basins, basin_areas = regenerate_node_ids(
+    #     boundaries=boundaries,
+    #     split_nodes=split_nodes,
+    #     basins=basins,
+    #     basin_connections=basin_connections,
+    #     boundary_connections=boundary_connections,
+    #     basin_areas=basin_areas,
+    # )
+    # boundaries, split_nodes, basins = generate_ribasim_types_for_all_split_nodes(
+    #     boundaries=boundaries, 
+    #     split_nodes=split_nodes, 
+    #     basins=basins, 
+    #     split_node_type_conversion=split_node_type_conversion, 
+    #     split_node_id_conversion=split_node_id_conversion
+    # )
 
     return dict(
         basin_areas=basin_areas,
@@ -689,5 +687,5 @@ def generate_ribasim_network_using_split_nodes(
         split_nodes=split_nodes,
         network_graph=network_graph,
         basin_connections=basin_connections,
-        boundary_connections=boundary_connections,
+        # boundary_connections=boundary_connections,
     )
