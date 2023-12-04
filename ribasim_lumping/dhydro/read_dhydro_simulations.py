@@ -4,7 +4,7 @@ import xarray as xr
 import pandas as pd
 import xugrid as xu
 from .read_dhydro_network import get_dhydro_data_from_simulation
-from .read_simulation_data_utils import (
+from .read_dhydro_simulations_utils import (
     get_data_from_simulations_set,
     combine_data_from_simulations_sets,
 )
@@ -65,10 +65,6 @@ def add_dhydro_simulation_data(
     model_dir: Path,
     simulation_names: List[str],
     simulation_ts: Union[List, pd.DatetimeIndex] = [-1],
-    set_names: List[str] = [],
-    model_dirs: List[Path] = [],
-    simulations_names: List[List[str]] = [],
-    simulations_ts: List = [],
     his_data: xr.Dataset = None,
     map_data: xu.UgridDataset = None
 ):
@@ -88,11 +84,6 @@ def add_dhydro_simulation_data(
             )
             return his_data, map_data#, self.boundaries_data
 
-    set_names.append(set_name)
-    model_dirs.append(model_dir)
-    simulations_names.append(simulation_names)
-    simulations_ts.append(simulation_ts)
-
     new_his_data, new_map_data = get_data_from_simulations_set(
         set_name=set_name,
         simulations_dir=simulations_dir,
@@ -102,5 +93,5 @@ def add_dhydro_simulation_data(
     his_data = combine_data_from_simulations_sets(his_data, new_his_data)
     map_data = combine_data_from_simulations_sets(map_data, new_map_data, xugrid=True)
 
-    return set_names, model_dirs, simulations_names, simulations_ts, his_data, map_data
+    return his_data, map_data
 
