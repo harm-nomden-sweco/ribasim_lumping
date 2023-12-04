@@ -16,9 +16,9 @@ def generate_ribasim_nodes_static(
     # Ribasim Nodes Static
     ribasim_nodes_static = gpd.GeoDataFrame(
         data=pd.concat([
-            boundaries, 
-            split_nodes.rename(columns={"split_node_id": "name"}),
-            basins,
+            boundaries.rename(columns={"boundary_node_id": "node_id"}), 
+            split_nodes.rename(columns={"split_node_node_id": "node_id", "split_node_id": "name"}),
+            basins.rename(columns={"basin_node_id": "node_id"}),
         ]),
         geometry='geometry',
         crs=split_nodes.crs
@@ -140,8 +140,6 @@ def generate_ribasim_model(
     basin_connections: gpd.GeoDataFrame = None, 
     boundary_connections: gpd.GeoDataFrame = None, 
     tables: Dict = None,
-    starttime: str = None,
-    endtime: str = None
 ):
     """generate ribasim model from ribasim nodes and edges and
     optional input; ribasim basins, level boundary, flow_boundary, pump, tabulated rating curve and manning resistance """
@@ -188,6 +186,9 @@ def generate_ribasim_model(
     ribasim_manning_resistance = generate_ribasim_manningresistances(
         manningresistance_static=tables['manningresistance_static'], 
     )
+
+    starttime = tables['basin_time']["time"].iloc[0].strftime("%Y-%m-%d %H:%M")
+    endtime = tables['basin_time']["time"].iloc[-1].strftime("%Y-%m-%d %H:%M")
 
     print("")
     ribasim_model = ribasim.Model(

@@ -1,31 +1,33 @@
 # pylint: disable=missing-function-docstring
 import sys
 import os
+from contextlib import closing
 from pathlib import Path
+from sqlite3 import connect
 from typing import List, Union, Dict
 import shutil
 import matplotlib.pyplot as plt
-import subprocess
 from pydantic import BaseModel
 import geopandas as gpd
 import pandas as pd
 import xarray as xr
 import xugrid as xu
 import networkx as nx
+from shapely.geometry import Point
 from .utils.general_functions import find_file_in_directory
 from .dhydro.read_dhydro_network import get_dhydro_volume_based_on_basis_simulations
 from .dhydro.read_dhydro_simulations import add_dhydro_basis_network, add_dhydro_simulation_data
-from .ribasim_utils.generate_split_nodes import add_split_nodes_based_on_selection
-from .ribasim_utils.generate_ribasim_network import generate_ribasim_network_using_split_nodes
-from .ribasim_utils.export_load_split_nodes import (
+from .ribasim_network_generator.generate_split_nodes import add_split_nodes_based_on_selection
+from .ribasim_network_generator.generate_ribasim_network import generate_ribasim_network_using_split_nodes
+from .ribasim_network_generator.export_load_split_nodes import (
     write_structures_to_excel,
     read_structures_from_excel,
 )
-from .ribasim_utils.generate_ribasim_model import generate_ribasim_model
-from .ribasim_utils.generate_ribasim_model_preprocessing import preprocessing_ribasim_model_tables
-from .ribasim_utils.generate_ribasim_model_tables import generate_ribasim_model_tables
-
-sys.path.append("..\\..\\ribasim\\python\\ribasim")
+from .ribasim_model_generator.generate_ribasim_model import generate_ribasim_model
+from .ribasim_model_generator.generate_ribasim_model_preprocessing import preprocessing_ribasim_model_tables
+from .ribasim_model_generator.generate_ribasim_model_tables import generate_ribasim_model_tables
+from .ribasim_model_results.ribasim_results import read_ribasim_model_results
+sys.path.append("..\\..\\..\\ribasim\\python\\ribasim")
 import ribasim
 
 
@@ -36,7 +38,7 @@ class RibasimLumpingNetwork(BaseModel):
     dhydro_basis_dir: Path
     dhydro_results_dir: Path
     results_dir: Path
-    path_ribasim_executable: Path
+    path_ribasim_executable: Path = None
     areas_gdf:gpd.GeoDataFrame = None
     his_data: xu.UgridDataset = None
     map_data: xu.UgridDataset = None
@@ -60,6 +62,7 @@ class RibasimLumpingNetwork(BaseModel):
     boundaries_data: pd.DataFrame = None
     laterals_data: pd.DataFrame = None
     simulation_code: str = None
+    simulation_path: Path = None
     basin_areas_gdf: gpd.GeoDataFrame = None
     basins_gdf: gpd.GeoDataFrame = None
     split_nodes: gpd.GeoDataFrame = None
@@ -68,11 +71,19 @@ class RibasimLumpingNetwork(BaseModel):
     split_node_type_conversion: Dict = None
     split_node_id_conversion: Dict = None
     nodes_h_df: pd.DataFrame = None
+    nodes_h_basin_df: pd.DataFrame = None
     nodes_a_df: pd.DataFrame = None
     nodes_v_df: pd.DataFrame = None
     basins_h_df: pd.DataFrame = None
     basins_a_df: pd.DataFrame = None
     basins_v_df: pd.DataFrame = None
+    edge_q_df: pd.DataFrame = None
+    weir_q_df: pd.DataFrame = None
+    uniweir_q_df: pd.DataFrame = None
+    orifice_q_df: pd.DataFrame = None
+    culvert_q_df: pd.DataFrame = None
+    bridge_q_df: pd.DataFrame = None
+    pump_q_df: pd.DataFrame = None
     basins_outflows: pd.DataFrame = None
     node_bedlevel: pd.DataFrame = None
     node_targetlevel: pd.DataFrame = None
@@ -138,22 +149,15 @@ class RibasimLumpingNetwork(BaseModel):
         simulation_ts: Union[List, pd.DatetimeIndex] = [-1],
         source_type: str = 'dhydro',
     ):
-        results = None
         if source_type == 'dhydro':
-            results = add_dhydro_simulation_data(
+            self.his_data, self.map_data = add_dhydro_simulation_data(
                 set_name=set_name,
                 model_dir=model_dir,
                 simulation_names=simulation_names,
                 simulation_ts=simulation_ts,
-                set_names=self.set_names,
-                model_dirs=self.model_dirs,
-                simulations_names=self.simulations_names,
-                simulations_ts=self.simulations_ts,
                 his_data=self.his_data,
                 map_data=self.map_data
             )
-            self.set_names, self.model_dirs, self.simulations_names, self.simulations_ts, \
-                self.his_data, self.map_data = results
             self.source_types.append(source_type)
             self.set_names.append(set_name)
             self.model_dirs.append(model_dir)
@@ -161,7 +165,7 @@ class RibasimLumpingNetwork(BaseModel):
             self.simulations_ts.append(simulation_ts)
         else:
             print(f"  x for this source type ({source_type}) no model type is added")
-        return results
+        return self.his_data, self.map_data
 
     def add_split_nodes(
         self,
@@ -238,6 +242,7 @@ class RibasimLumpingNetwork(BaseModel):
         split_node_id_conversion: Dict,
     ) -> Dict:
         self.simulation_code = simulation_code
+        self.simulation_path = Path(self.results_dir, simulation_code)
         if self.split_nodes is None:
             raise ValueError("no split_nodes defined: use .add_split_nodes()")
         if self.nodes_gdf is None or self.edges_gdf is None:
@@ -279,35 +284,58 @@ class RibasimLumpingNetwork(BaseModel):
     def generate_ribasim_model_complete(
         self, 
         set_name: str,
-        starttime: str = None,
-        endtime: str = None
+        use_basis_network_laterals: bool = True,
+        initial_waterlevels_simulation_name: str = None,
+        drainage_per_ha: pd.Series = None,
+        saveat: int = None,
+        interpolation_lines: int = 5
     ):
         if set_name not in self.basis_set_names:
             raise ValueError(f'set_name {set_name} not in available set_names')
-
+        
         # preprocessing data to input for tables
-        basins_outflows, node_h, node_a, node_v, basin_h, basin_a, basin_v, node_bedlevel, node_targetlevel, orig_bedlevel = \
-            preprocessing_ribasim_model_tables(
-                map_data=self.map_data, 
-                volume_data=self.volume_data, 
-                nodes=self.nodes_gdf, 
-                weirs=self.weirs_gdf, 
-                pumps=self.pumps_gdf, 
-                basins=self.basins_gdf, 
-                split_nodes=self.split_nodes, 
-                basin_connections=self.basin_connections_gdf, 
-                boundary_connections=self.boundary_connections_gdf,
-            )
-        self.nodes_gdf["bedlevel"] = orig_bedlevel.copy()
-        self.nodes_h_df = node_h.copy()
-        self.nodes_a_df = node_a.copy()
-        self.nodes_v_df = node_v.copy()
-        self.basins_h_df = basin_h.copy()
-        self.basins_a_df = basin_a.copy()
-        self.basins_v_df = basin_v.copy()
-        self.basins_outflows = basins_outflows.copy()
-        self.node_bedlevel = node_bedlevel.copy()
-        self.node_targetlevel = node_targetlevel.copy()
+        basins_outflows, node_h_basin, node_h_node, node_a, node_v, basin_h, basin_a, basin_v, \
+            node_bedlevel, node_targetlevel, orig_bedlevel, edge_q_df, weir_q_df, uniweir_q_df, \
+                orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df = \
+                    preprocessing_ribasim_model_tables(
+                        map_data=self.map_data, 
+                        his_data=self.his_data,
+                        volume_data=self.volume_data, 
+                        nodes=self.nodes_gdf, 
+                        weirs=self.weirs_gdf, 
+                        pumps=self.pumps_gdf, 
+                        basins=self.basins_gdf, 
+                        split_nodes=self.split_nodes, 
+                        basin_connections=self.basin_connections_gdf, 
+                        boundary_connections=self.boundary_connections_gdf,
+                        interpolation_lines=interpolation_lines
+                    )
+        self.nodes_gdf["bedlevel"] = orig_bedlevel
+        self.nodes_h_df = node_h_node
+        self.nodes_h_basin_df = node_h_basin
+        self.nodes_a_df = node_a
+        self.nodes_v_df = node_v
+        self.basins_h_df = basin_h
+        self.basins_a_df = basin_a
+        self.basins_v_df = basin_v
+        self.edge_q_df = edge_q_df
+        self.weir_q_df = weir_q_df
+        self.uniweir_q_df = uniweir_q_df
+        self.orifice_q_df = orifice_q_df
+        self.culvert_q_df = culvert_q_df
+        self.bridge_q_df = bridge_q_df
+        self.pump_q_df = pump_q_df
+        self.basins_outflows = basins_outflows
+        self.node_bedlevel = node_bedlevel
+        self.node_targetlevel = node_targetlevel
+        
+        basin_h_initial = None
+        if initial_waterlevels_simulation_name is not None:
+            for i_set_name, i_simulations_names in zip(self.set_names, self.simulations_names):
+                if i_set_name == set_name:
+                    ind_initial_h = i_simulations_names.index(initial_waterlevels_simulation_name)
+                    break
+            basin_h_initial = basin_h.loc[set_name].iloc[ind_initial_h + 2 + interpolation_lines*2]
 
         # generate ribasim model tables
         tables = generate_ribasim_model_tables(
@@ -315,11 +343,24 @@ class RibasimLumpingNetwork(BaseModel):
             basin_a=basin_a, 
             basins=self.basins_gdf, 
             basin_areas=self.basin_areas_gdf,
+            laterals=self.laterals_gdf,
+            laterals_data=self.laterals_data,
             boundaries=self.boundaries_gdf, 
-            boundaries_data=self.boundaries_data, 
+            boundaries_data=self.boundaries_data,
             split_nodes=self.split_nodes,
             basins_outflows=basins_outflows,
             set_name=set_name,
+            basin_h_initial=basin_h_initial,
+            use_basis_network_laterals=use_basis_network_laterals,
+            saveat=saveat,
+            drainage_per_ha=drainage_per_ha,
+            edge_q_df=edge_q_df, 
+            weir_q_df=weir_q_df, 
+            uniweir_q_df=uniweir_q_df, 
+            orifice_q_df=orifice_q_df, 
+            culvert_q_df=culvert_q_df, 
+            bridge_q_df=bridge_q_df, 
+            pump_q_df=pump_q_df,
         )
 
         # generate ribasim model
@@ -331,18 +372,24 @@ class RibasimLumpingNetwork(BaseModel):
             basin_connections=self.basin_connections_gdf.copy(),
             boundary_connections=self.boundary_connections_gdf.copy(),
             tables=tables,
-            starttime=starttime,
-            endtime=endtime,
         )
         self.ribasim_model = ribasim_model
-
+        
         # Export ribasim model
-        simulation_path = Path(self.results_dir, self.simulation_code)
-        ribasim_model.write(simulation_path)
-        with open(Path(simulation_path, "run_ribasim_model.bat"), 'w') as f:
+        if self.simulation_path is None:
+            self.simulation_path = Path(self.results_dir, self.simulation_code)
+        # check for timestep (saveat)
+        if saveat is not None:
+            ribasim_model.solver = ribasim.Solver(saveat=saveat)
+
+        ribasim_model.write(self.simulation_path)
+        with open(Path(self.simulation_path, "run_ribasim_model.bat"), 'w') as f:
             f.write(f"{str(self.path_ribasim_executable)} ribasim.toml\n")
             f.write(f"pause")
+
         print(f"Export location: {Path(self.results_dir, self.simulation_code)}")
+        # export ribasim_network
+        self.export_to_geopackage(simulation_code=self.simulation_code)
         return ribasim_model
 
     def export_to_geopackage(self, simulation_code: str, results_dir: Union[Path, str] = None):
@@ -371,12 +418,26 @@ class RibasimLumpingNetwork(BaseModel):
             basin_connections=self.basin_connections_gdf,
             boundaries=self.boundaries_gdf,
             boundary_connections=self.boundary_connections_gdf,
+            node_h=self.nodes_h_df,
+            node_a=self.nodes_a_df,
+            node_v=self.nodes_v_df,
+            basin_h=self.basins_h_df,
+            basin_a=self.basins_a_df,
+            basin_v=self.basins_v_df,
         )
         gdfs_none = dict()
         gdfs = dict()
         for gdf_name, gdf in gdfs_orig.items():
             if gdf is None:
                 gdfs_none[gdf_name] = gdf
+            elif "geometry" not in gdf.columns:
+                column = gdf.columns.name
+                gdf = gdf.stack()
+                gdf.name = "data"
+                gdf = gdf.reset_index().reset_index().sort_values(by=[column, "index"]).reset_index(drop=True).drop(columns="index")
+                gdf["geometry"] = Point(0,0)
+                gdf = gpd.GeoDataFrame(gdf, geometry="geometry", crs=28992)
+                gdfs[gdf_name] = gdf
             else:
                 gdfs[gdf_name] = gdf
 
@@ -393,6 +454,19 @@ class RibasimLumpingNetwork(BaseModel):
             print(f"{gdf_name}, ", end="", flush=True)
             empty_gdf.to_file(gpkg_path, layer=gdf_name, driver="GPKG")
 
+        # dfs_orig = dict(
+        # )
+        # write to database using sqlite3
+        # with closing(connect(gpkg_path)) as connection:
+        #     for df_orig_name, df_orig in dfs_orig.items():
+        #         sql = "INSERT INTO gpkg_contents (table_name, data_type, identifier) VALUES (?, ?, ?)"
+        #         if df_orig is None:
+        #             continue
+        #         df_orig.to_sql(df_orig_name, connection, index=False, if_exists="replace")
+        #         with closing(connection.cursor()) as cursor:
+        #             cursor.execute(sql, (df_orig_name, "attributes", df_orig_name))
+        #     connection.commit()
+        
         if not qgz_path.exists():
             qgz_path_stored_dir = os.path.abspath(os.path.dirname(__file__))
             qgz_path_stored = Path(qgz_path_stored_dir, "assets\\ribasim_network.qgz")
@@ -433,41 +507,40 @@ class RibasimLumpingNetwork(BaseModel):
 
         return structures_ids_to_include_as_splitnode, split_node_id_conversion
 
-    def plot_basin_waterlevels_for_basins(self, set_name: str, basins_nos: List[int]):
+    def plot_basin_waterlevels_for_basins(self, set_name: str, basin_node_ids: List[int]):
         """A plot will be generated showing the bed level and waterlevels along node_no (x-axis)
         input selected set_name and basin node_ids"""
-        for basin_no in basins_nos:
-            basin_node_no = self.basins_gdf[self.basins_gdf['node_id']==basin_no].node_no.values[0]
+        for basin_node_id in basin_node_ids:
+            basin_node_no = self.basins_gdf[self.basins_gdf.basin_node_id==basin_node_id].node_no.values[0]
 
-            fig, ax = plt.subplots()
-            nodes_basin = self.nodes_gdf.groupby(by='basin').get_group(basin_no)
-            nodes_basin['bedlevel'].plot(ax=ax, linewidth=4, color='black')
-
+            fig, ax = plt.subplots(figsize=(9,6))
+            nodes_basin = self.nodes_gdf.groupby(by='basin_node_id').get_group(basin_node_id)
             basin_node_nos = list(nodes_basin.node_no.values)
             node_h_new = self.nodes_h_df[basin_node_nos].loc[set_name].T
-            node_h_new[node_h_new.columns[-1:5:-1]].plot(ax=ax)
-            node_h_new[node_h_new.columns[4:6]].plot(ax=ax, color='lightgrey', linestyle='--')
-            node_h_new[node_h_new.columns[3]].plot(ax=ax, linewidth=4, linestyle='--')
-            node_h_new[node_h_new.columns[1:3]].plot(ax=ax, color='lightgrey', linestyle='--')
-            node_h_new[node_h_new.columns[0]].rename('lowestlevel').plot(ax=ax, linewidth=4)
-            
+
             ax.axvline(basin_node_no, linestyle='--')
+
+            node_h_new[node_h_new.columns[-1:5:-1]].plot(ax=ax, style='o')
+            node_h_new[node_h_new.columns[5:3:-1]].plot(ax=ax, color='lightgrey', style='o')
+            node_h_new[node_h_new.columns[3]].plot(ax=ax, linewidth=4, style='o')
+            node_h_new[node_h_new.columns[2:0:-1]].plot(ax=ax, color='lightgrey', style='o')
+            node_h_new[node_h_new.columns[0]].rename('lowestlevel').plot(ax=ax, style='o')
+            node_h_new["bedlevel"].plot(ax=ax, linewidth=4, color='black', linestyle='--')
+            
             plt.legend(loc='upper left', bbox_to_anchor=(-0.4,1))
             ax.text(
-                0.95, 0.95, f'Basin {basin_no}',
+                0.95, 0.95, f'Basin {basin_node_id}',
                 verticalalignment='top', horizontalalignment='right',
                 transform=ax.transAxes, fontsize=15
             )
 
     def read_ribasim_results(self, simulation_code: str):
         simulation_path = Path(self.results_dir, simulation_code)
-        def read_arrow_file(name: str):
-            arrow_file = Path(simulation_path, 'results', f"{name}.arrow")
-            return pd.read_feather(arrow_file)
-        basin_df = read_arrow_file('basin')
-        control_df = read_arrow_file('control')
-        flow_df = read_arrow_file('flow')
-        return basin_df, control_df, flow_df
+        ribasim_results = read_ribasim_model_results(
+            simulation_path=simulation_path
+        )
+        return ribasim_results
+
 
 def create_ribasim_lumping_network(**kwargs):
     return RibasimLumpingNetwork(**kwargs)

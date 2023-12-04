@@ -497,29 +497,31 @@ def regenerate_node_ids(
     basins: gpd.GeoDataFrame,
     basin_connections: gpd.GeoDataFrame,
     boundary_connections: gpd.GeoDataFrame,
-    basin_areas: gpd.GeoDataFrame
+    basin_areas: gpd.GeoDataFrame,
+    nodes: gpd.GeoDataFrame,
+    edges: gpd.GeoDataFrame
 ):
     """Regenerate ribasim node-id for nodes and edges"""
     print(f" - regenerate node-ids Ribasim-Nodes and Ribasim-Edges")
     # boundaries
-    if "node_id" in boundaries.columns:
-        boundaries = boundaries.drop(columns=["node_id"])
-    boundaries.insert(1, "node_id", boundaries["boundary"])
+    if "boundary_node_id" in boundaries.columns:
+        boundaries = boundaries.drop(columns=["boundary_node_id"])
+    boundaries.insert(1, "boundary_node_id", boundaries["boundary"])
         
     len_boundaries = len(boundaries)
 
     # split_nodes
-    if "node_id" not in split_nodes.columns:
-        split_nodes.insert(loc=1, column="node_id", value=split_nodes["split_node"] + len_boundaries)
+    if "split_node_node_id" not in split_nodes.columns:
+        split_nodes.insert(loc=1, column="split_node_node_id", value=split_nodes["split_node"] + len_boundaries)
     else:
-        split_nodes["node_id"] = split_nodes["split_node"] + len_boundaries
+        split_nodes["split_node_node_id"] = split_nodes["split_node"] + len_boundaries
     len_split_nodes = len(split_nodes)
 
     # basins
-    if "node_id" not in basins.columns:
-        basins.insert(loc=1, column="node_id", value=basins["basin"] + len_split_nodes + len_boundaries)
+    if "basin_node_id" not in basins.columns:
+        basins.insert(loc=1, column="basin_node_id", value=basins["basin"] + len_split_nodes + len_boundaries)
     else:
-        basins["node_id"] = basins["basin"] + len_split_nodes + len_boundaries
+        basins["basin_node_id"] = basins["basin"] + len_split_nodes + len_boundaries
     len_basins = len(basins)
 
     # basin_connections
@@ -549,8 +551,29 @@ def regenerate_node_ids(
         ), axis=1
     )
 
-    basin_areas = basin_areas.merge(basins[["basin", "node_id"]], on="basin")
-    return boundaries, split_nodes, basins, basin_areas
+    basin_areas = basin_areas.merge(basins[["basin", "basin_node_id"]], on="basin")
+
+    mapping_basins_node_id = basins.set_index("basin")["basin_node_id"].to_dict()
+    nodes["basin_node_id"] = nodes["basin"].replace(mapping_basins_node_id)
+    edges["basin_node_id"] = edges["basin"].replace(mapping_basins_node_id)
+
+    connections = pd.concat([
+        basin_connections[["from_node_id", "to_node_id"]], 
+        boundary_connections[["from_node_id", "to_node_id"]]
+    ])
+    split_nodes = gpd.GeoDataFrame(split_nodes.merge(
+        connections.set_index("to_node_id"), 
+        how="left", 
+        left_on="split_node_node_id", 
+        right_index=True
+    ), geometry="geometry", crs=split_nodes.crs)
+    split_nodes = gpd.GeoDataFrame(split_nodes.merge(
+        connections.set_index("from_node_id"), 
+        how="left", 
+        left_on="split_node_node_id", 
+        right_index=True
+    ), geometry="geometry", crs=split_nodes.crs)
+    return boundaries, split_nodes, basins, basin_areas, nodes, edges
 
 
 def generate_ribasim_types_for_all_split_nodes(
@@ -664,13 +687,15 @@ def generate_ribasim_network_using_split_nodes(
         nodes=nodes,
         edges=edges
     )
-    boundaries, split_nodes, basins, basin_areas = regenerate_node_ids(
+    boundaries, split_nodes, basins, basin_areas, nodes, edges = regenerate_node_ids(
         boundaries=boundaries,
         split_nodes=split_nodes,
         basins=basins,
         basin_connections=basin_connections,
         boundary_connections=boundary_connections,
         basin_areas=basin_areas,
+        nodes=nodes,
+        edges=edges
     )
     boundaries, split_nodes, basins = generate_ribasim_types_for_all_split_nodes(
         boundaries=boundaries, 

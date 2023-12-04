@@ -5,10 +5,19 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "basic_model_with_static_forcing",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/notebooks/examples/basic_model_with_static_forcing.ipynb",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "cwd": "${fileDirname}"
+        },
+        {
             "name": "run_analysis_hooge_raam",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/notebooks/run_analysis_hooge_raam.ipynb",
+            "program": "${workspaceFolder}/notebooks/tki_pilots/run_analysis_hooge_raam.ipynb",
             "console": "integratedTerminal",
             "justMyCode": true,
             "cwd": "${fileDirname}"

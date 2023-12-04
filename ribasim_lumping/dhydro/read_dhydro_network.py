@@ -7,6 +7,7 @@ import subprocess
 import configparser
 import pandas as pd
 import geopandas as gpd
+import datetime
 from shapely.geometry import Point, LineString
 import xarray as xr
 import xugrid as xu
@@ -21,7 +22,7 @@ def get_dhydro_files(simulation_path: Path):
     input_files = dict()
     mdu_file = ""
     mdu_file = find_file_in_directory(simulation_path, ".mdu")
-    # print(f"  - MDU-file: {mdu_file}")
+    print(f"  - MDU-file: {mdu_file}")
 
     replace_string_in_file(mdu_file, "*\n", "# *\n")
     mdu = configparser.ConfigParser()
@@ -179,6 +180,10 @@ def get_dhydro_structures_locations(
         gdf2=edges_gdf.set_index('edge_no').sort_index(),
         new_column='edge_no',
     )
+    object_types = list(structures_gdf.object_type.unique())
+    for object_type in object_types:
+        len_objects = len(structures_gdf[structures_gdf.object_type==object_type])
+        print(f" {object_type} ({len_objects}x),", end="", flush=True)
     return structures_gdf
 
 
@@ -224,15 +229,15 @@ def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame):
         if 'comments' in structure_gdf.columns:
             structure_gdf.loc[:, 'comments'] = structure_gdf.loc[:, 'comments'].astype(str)
         # in case of pumps check if multiple pumps in one pumping station
-        if structure_type == "pump" and ~structure_gdf.empty:
-            old_no_pumps = len(structure_gdf)
-            structure_gdf = check_number_of_pumps_at_pumping_station(structure_gdf)
-            if old_no_pumps > len(structure_gdf):
-                print(f" pumps ({old_no_pumps}x->{len(structure_gdf)}x)", end="", flush=True)
-            else:
-                print(f" pumps ({len(structure_gdf)}x)", end="", flush=True)
-        else:
-            print(f" {structure_type}s ({len(structure_gdf)}x)", end="", flush=True)
+        # if structure_type == "pump" and ~structure_gdf.empty:
+        #     old_no_pumps = len(structure_gdf)
+        #     structure_gdf = check_number_of_pumps_at_pumping_station(structure_gdf)
+        #     if old_no_pumps > len(structure_gdf):
+        #         print(f" pumps ({old_no_pumps}x->{len(structure_gdf)}x)", end="", flush=True)
+        #     else:
+        #         print(f" pumps ({len(structure_gdf)}x)", end="", flush=True)
+        # else:
+        #     print(f" {structure_type}s ({len(structure_gdf)}x)", end="", flush=True)
 
         structure_gdf = structure_gdf.dropna(axis=1, how='all')
         for col in structure_gdf.columns:
@@ -315,7 +320,40 @@ def get_dhydro_forcing_data(
             laterals_data = pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])
         else:
             laterals_data = pd.concat([laterals_data, pd.DataFrame([forcing.dict() for forcing in forcingmodel_object.forcing])])
+
+    # convert datablock to timeseries dataframe
+    def assess_lateral_data(lateral_data):
+        if lateral_data.function=="timeseries":
+            start_datetime = lateral_data.quantityunitpair[0]["unit"][-19:]
+            start_datetime = datetime.datetime.strptime(start_datetime, "%Y-%m-%d %H:%M:%S")
+            ts = [start_datetime + datetime.timedelta(minutes=t[0]) for t in lateral_data.datablock]
+            lateral_data_data = [l[1] for l in lateral_data.datablock]
+            laterals_df = pd.Series(index=ts, data=lateral_data_data, name=lateral_data["name"])
+            laterals_df.index = pd.to_datetime(laterals_df.index)
+            return laterals_df
+        if lateral_data.function=="constant":
+            return {lateral_data["name"]: lateral_data["datablock"][0][0]}
+
+
+    def get_laterals_data_df(laterals_data, laterals_gdf):
+        laterals_data = laterals_data.merge(laterals_gdf["name"], how="right", left_on="name", right_on="name")
+        laterals_df = pd.DataFrame()
+        laterals_floats = dict()
+        for i, lateral_data in laterals_data.iterrows():
+            lateral_data = assess_lateral_data(lateral_data)
+            if isinstance(lateral_data, pd.Series):
+                laterals_df = pd.concat([laterals_df, lateral_data], axis=1)
+            if isinstance(lateral_data, dict):
+                laterals_floats.update(lateral_data)
+        for lateral_name, lateral_float in laterals_floats.items():
+            laterals_df[lateral_name] = lateral_float
+        laterals_df.index = pd.to_datetime(laterals_df.index)
+        return laterals_df
+
+    laterals_data = get_laterals_data_df(laterals_data, laterals_gdf)
+
     return boundaries_data, laterals_data
+
 
 def get_dhydro_volume_based_on_basis_simulations(
     mdu_input_dir: Path,
@@ -329,11 +367,13 @@ def get_dhydro_volume_based_on_basis_simulations(
         subprocess.Popen(
             f'"{volume_tool_bat_file}" --mdufile "{mdu_file.name}" --increment {str(volume_tool_increment)} --outputfile volume.nc --output "All"', cwd=str(mdu_file.parent)
         )
+        volume_nc_file = find_file_in_directory(mdu_input_dir, "PerGridpoint_volume.nc")
         print(f"  - volume_tool: new level-volume dataframe created: {volume_nc_file.name}")
     else:
         print("  - volume_tool: file already exists, use force=True to force recalculation volume")
     volume = xu.open_dataset(volume_nc_file)
     return volume
+
 
 def get_dhydro_data_from_simulation(
     simulation_path: Path, 
