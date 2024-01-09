@@ -6,8 +6,8 @@ from shapely.geometry import LineString, Point
 def add_hydamo_basis_network(
     hydamo_network_file: Path = 'network.gpkg',
     hydamo_network_gpkg_layer: str = None,
-    hydamo_boundary_file: Path = None,
-    hydamo_boundary_gpkg_layer: str = None,
+    boundary_file: Path = None,
+    boundary_gpkg_layer: str = None,
     crs: int = 28992,
 ):
     """
@@ -24,9 +24,9 @@ def add_hydamo_basis_network(
     edges_gdf = edges_gdf.rename(columns={'code': 'branch_id'})[['branch_id', 'geometry']]
     edges_gdf, nodes_gdf = generate_nodes_from_edges(edges_gdf)
 
-    if hydamo_boundary_file is not None:
-        print('Reading boundaries from HyDAMO boundary file...')
-        boundaries_gdf = read_geom_file(filepath=hydamo_boundary_file, layer_name=hydamo_boundary_gpkg_layer, crs=crs)
+    if boundary_file is not None:
+        print('Reading boundaries from boundary file...')
+        boundaries_gdf = read_geom_file(filepath=boundary_file, layer_name=boundary_gpkg_layer, crs=crs)
         boundaries_gdf = boundaries_gdf.explode()  # explode to transform multi-part geoms to single
         boundaries_gdf.geometry = [Point(g.coords[0][:2]) for g in boundaries_gdf.geometry.values]  # remove possible Z dimension
     else:
