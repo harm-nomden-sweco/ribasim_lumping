@@ -14,20 +14,21 @@ import xarray as xr
 import xugrid as xu
 import networkx as nx
 from shapely.geometry import Point
-from .utils.general_functions import find_file_in_directory
-from .dhydro.read_dhydro_network import get_dhydro_volume_based_on_basis_simulations
+from .utils.general_functions import (
+    read_geom_file, 
+    snap_to_network, 
+    split_edges_by_split_nodes
+)
 from .dhydro.read_dhydro_simulations import add_dhydro_basis_network, add_dhydro_simulation_data
+from .hydamo.read_hydamo_network import add_hydamo_basis_network
 from .ribasim_network_generator.generate_split_nodes import add_split_nodes_based_on_selection
 from .ribasim_network_generator.generate_ribasim_network import generate_ribasim_network_using_split_nodes
-from .ribasim_network_generator.export_load_split_nodes import (
-    write_structures_to_excel,
-    read_structures_from_excel,
-)
+from .ribasim_network_generator.export_load_split_nodes import write_structures_to_excel, read_structures_from_excel
 from .ribasim_model_generator.generate_ribasim_model import generate_ribasim_model
 from .ribasim_model_generator.generate_ribasim_model_preprocessing import preprocessing_ribasim_model_tables
 from .ribasim_model_generator.generate_ribasim_model_tables import generate_ribasim_model_tables
 from .ribasim_model_results.ribasim_results import read_ribasim_model_results
-sys.path.append("..\\..\\..\\ribasim\\python\\ribasim")
+#sys.path.append("..\\..\\..\\ribasim\\python\\ribasim")
 import ribasim
 
 
@@ -35,10 +36,10 @@ class RibasimLumpingNetwork(BaseModel):
     """class to select datapoints from different simulations at certain timestamps"""
     name: str
     base_dir: Path
-    dhydro_basis_dir: Path
-    dhydro_results_dir: Path
     results_dir: Path
     path_ribasim_executable: Path = None
+    dhydro_basis_dir: Path = None,
+    dhydro_results_dir: Path = None,
     areas_gdf:gpd.GeoDataFrame = None
     his_data: xu.UgridDataset = None
     map_data: xu.UgridDataset = None
@@ -103,42 +104,148 @@ class RibasimLumpingNetwork(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    def read_areas(self, areas_file_path: Path, areas_id_column: str):
-        areas_gdf = gpd.read_file(areas_file_path)
+    def read_areas(self, areas_file_path: Path, areas_id_column: str, layer_name: str = None):
+        """
+        Read areas (e.g. "afwateringseenheden"). In case of geopackage, provide layer_name.
+
+        Args:
+            areas_file_path (Path):     Path to file containing areas geometries
+            areas_id_column (str):      (optional) Id column for areas. If not provided, first column will be used for id
+            layer_name (str):           Layer name in geopackage. Needed when file is a geopackage
+                  
+        """
+        areas_gdf = read_geom_file(filepath=areas_file_path, layer_name=layer_name)
+        areas_gdf = areas_gdf.explode()  # explode to transform multi-part geoms to single
+        areas_id_column = areas_id_column if areas_id_column is not None else list(areas_gdf.columns)[0]
         self.areas_gdf = areas_gdf[[areas_id_column, "geometry"]]
         print(f" - areas ({len(areas_gdf)}x)")
 
     def add_basis_network(
         self, 
-        source_type: str, 
-        model_dir: Path,
-        set_name: str, 
-        simulation_name: str,
-        dhydro_volume_tool_bat_file: Path, 
+        source_type: str,
+        dhydro_model_dir: Path = '.', 
+        dhydro_simulation_name: str = 'default',
+        dhydro_volume_tool_bat_file: Path = '.', 
         dhydro_volume_tool_force: bool = False,
-        dhydro_volume_tool_increment: float = 0.1
+        dhydro_volume_tool_increment: float = 0.1,
+        hydamo_network_file: Path = 'network.gpkg',
+        hydamo_network_gpkg_layer: str = 'network',
+        boundary_file: Path = 'boundary.gpkg',
+        boundary_gpkg_layer: str = 'boundary',
+        hydamo_split_nodes_bufdist: float = 10.0,
+        hydamo_boundary_bufdist: float = 10.0,
+        hydamo_write_results_to_gpkg: bool = False
     ):
+        """
+        Add (detailed) base network which will used to derive Ribasim network. Source type can either be "dhydro" or
+        "hydamo". 
+        If "dhydro", provide arguments for D-HYDRO volume tool (arguments dhydro_volume_*) and model simulation
+        (model_dir, simulation_name).
+        If "hydamo", provide arguments for path to file containing network geometries (hydamo_network_file) and
+        in case of geopackage also the layer name (hydamo_network_gpkg_layer)
+
+        Args:
+            source_type (str):                      Source type of network. Options are "dhydro" or "hydamo"
+            dhydro_model_dir (Path):                Directory path to D-HYDRO model
+            dhydro_simulation_name (str):           Name of D-HYDRO model simulation
+            dhydro_volume_tool_bat_file (Path):     Path to D-HYDRO volume tool batch file
+            dhydro_volume_tool_force (bool):        Set to True to force recalculation of D-HYDRO volume. Use False to read pre-calculated 
+                                                    volume in simulation results
+            dhydro_volume_tool_increment (float):   Increment argument (in m) for D-HYDRO volume tool
+            dhydro_volume_tool_bat_file (Path):     Path to D-HYDRO volume tool batch file
+            hydamo_network_file (str):              Path to HyDAMO file containing network geometries
+            hydamo_network_gpkg_layer (str):        Layer name of HyDAMO network file in case it is a geopackage
+            boundary_file (str):                    Path to file containing boundary geometries (additionally needed when using HyDAMO data)
+            boundary_gpkg_layer (str):              Layer name of boundary file in case it is a geopackage
+            hydamo_split_nodes_bufdist (float):     Buffer distance (in meter) to snap split nodes to HyDAMO network
+            hydamo_boundary_bufdist (float):        Buffer distance (in meter) to snap boundaries to HyDAMO network start/end nodes
+            hydamo_write_results_to_gpkg (bool):    Write intermediate results (split nodes, edges, nodes) for HyDAMO network to geopackages
+
+        Returns:
+            gpd.Geo:                                Network
+        """
         results = None
         if source_type == 'dhydro':
             results = add_dhydro_basis_network(
-                model_dir=model_dir, 
-                set_name=set_name, 
-                simulation_name=simulation_name,
+                model_dir=dhydro_model_dir,
+                simulation_name=dhydro_simulation_name,
                 volume_tool_bat_file=dhydro_volume_tool_bat_file, 
                 volume_tool_force=dhydro_volume_tool_force,
                 volume_tool_increment=dhydro_volume_tool_increment
             )
+            self.basis_model_dirs.append(dhydro_model_dir)
+            self.basis_simulations_names.append(dhydro_simulation_name)
+            if results is not None:
+                self.network_data, self.branches_gdf, self.network_nodes_gdf, self.edges_gdf, \
+                    self.nodes_gdf, self.boundaries_gdf, self.laterals_gdf, self.weirs_gdf, \
+                    self.uniweirs_gdf, self.pumps_gdf, self.orifices_gdf, self.bridges_gdf, \
+                    self.culverts_gdf, self.boundaries_data, self.laterals_data, self.volume_data = results
+        elif source_type == 'hydamo':
+            results = add_hydamo_basis_network(
+                hydamo_network_file=hydamo_network_file,
+                hydamo_network_gpkg_layer=hydamo_network_gpkg_layer,
+                boundary_file=boundary_file,
+                boundary_gpkg_layer=boundary_gpkg_layer
+            )
+            if results is not None:
+                self.branches_gdf, self.edges_gdf, self.nodes_gdf, self.boundaries_gdf = results
+            # Because the HyDAMO network and split nodes locations won't always nicely match up, we need to adjust the
+            # network and split nodes by snapping split nodes to network edges and splitting network edges on split node locations.
+            if self.split_nodes is None:
+                print(" - Split nodes are not yet loaded. No automatic adjustment of HyDAMO network and split nodes is done so they correctly\n"
+                      "     match up. This can lead to crash/exception at later stage. To fix: load split nodes before adding HyDAMO network\n"
+                      "     with .add_split_nodes_from_file() or .set_split_nodes()")
+            else:
+                self.split_nodes = snap_to_network(
+                    snap_type='split_node',
+                    points=self.split_nodes, 
+                    edges=self.edges_gdf, 
+                    nodes=self.nodes_gdf, 
+                    buffer_distance=hydamo_split_nodes_bufdist
+                )   
+                self.split_nodes, self.edges_gdf, self.nodes_gdf = split_edges_by_split_nodes(
+                    self.split_nodes, 
+                    self.edges_gdf, 
+                    buffer_distance=0.5  # some small buffer to be sure but should actually not be necessary because of previous snap action
+                )
+
+            # Also snap boundaries to network but only start/end nodes
+            if self.boundaries_gdf is not None:
+                self.boundaries_gdf = snap_to_network(
+                    snap_type='boundary',
+                    points=self.boundaries_gdf, 
+                    edges=self.edges_gdf, 
+                    nodes=self.nodes_gdf, 
+                    buffer_distance=hydamo_boundary_bufdist
+                ) 
+
+            # reset indexes of gdfs and rename some columns
+            for gdf in [self.split_nodes, self.edges_gdf, self.nodes_gdf, self.boundaries_gdf]:
+                gdf.reset_index(drop=True, inplace=True)
+                gdf.rename(columns={'split_type': 'object_type', 'Type': 'quantity', 'boundary_id': 'boundary'}, inplace=True)
+                if 'quantity' in gdf.columns:
+                    gdf['quantity'] = gdf['quantity'].replace({'FlowBoundary': 'dischargebnd', 'LevelBoundary': 'waterlevelbnd'})
+            # remove non-snapped split nodes
+            print("Remove non-snapped split nodes from dataset")
+            split_nodes_not_on_network = self.split_nodes.loc[(self.split_nodes['edge_no'] == -1) & (self.split_nodes['node_no'] == -1)]
+            self.split_nodes = self.split_nodes.loc[[i not in split_nodes_not_on_network.index for i in self.split_nodes.index]]
+            # remove non-snapped boundaries
+            print("Remove non-snapped boundaries from dataset")
+            boundaries_not_on_network = self.boundaries_gdf.loc[self.boundaries_gdf['node_no'] == -1]
+            self.boundaries_gdf = self.boundaries_gdf.loc[[i not in boundaries_not_on_network.index for i in self.boundaries_gdf.index]]
+
+            if hydamo_write_results_to_gpkg:
+                self.split_nodes.to_file(Path(self.results_dir, 'split_nodes.gpkg'), layer='split_nodes', index=False)
+                split_nodes_not_on_network.to_file(Path(self.results_dir, 'split_nodes_not_on_network.gpkg'), layer='split_nodes', index=False)
+                self.edges_gdf.to_file(Path(self.results_dir, 'edges.gpkg'), layer='edges', index=False)
+                self.nodes_gdf.to_file(Path(self.results_dir, 'nodes.gpkg'), layer='nodes', index=False)
+                self.boundaries_gdf.to_file(Path(self.results_dir, 'boundaries.gpkg'), layer='boundaries', index=False)
+                boundaries_not_on_network.to_file(Path(self.results_dir, 'boundaries_not_on_network.gpkg'), layer='boundaries', index=False)
+        else:
+            raise ValueError(f'Unknown source_type {source_type}. Only "dhydro" and "hydamo" are allowed')
         
         self.basis_source_types.append(source_type)
-        self.basis_set_names.append(set_name)
-        self.basis_model_dirs.append(model_dir)
-        self.basis_simulations_names.append(simulation_name)
 
-        if results is not None:
-            self.network_data, self.branches_gdf, self.network_nodes_gdf, self.edges_gdf, \
-                self.nodes_gdf, self.boundaries_gdf, self.laterals_gdf, self.weirs_gdf, \
-                self.uniweirs_gdf, self.pumps_gdf, self.orifices_gdf, self.bridges_gdf, \
-                self.culverts_gdf, self.boundaries_data, self.laterals_data, self.volume_data = results
         return results
 
     def add_simulation_set(
@@ -182,6 +289,9 @@ class RibasimLumpingNetwork(BaseModel):
         edge_ids_to_include: List[int] = [],
         edge_ids_to_exclude: List[int] = [],
     ) -> gpd.GeoDataFrame:
+        """
+        Set split nodes geodataframe in network object. Overwrites previously defined split nodes
+        """
         self.split_nodes  = add_split_nodes_based_on_selection(
             stations=stations,
             pumps=pumps,
@@ -207,6 +317,20 @@ class RibasimLumpingNetwork(BaseModel):
             ]
         )
         return self.split_nodes
+    
+    def add_split_nodes_from_file(self, split_nodes_file: Path, gpkg_layer_name: str = "default", crs: int = 28992):
+        """
+        Add split nodes in network object from file. Overwrites previously defined split nodes
+        """
+        self.split_nodes = read_geom_file(split_nodes_file, gpkg_layer_name, crs)
+        self.split_nodes = self.split_nodes.explode()
+
+
+    def set_split_nodes(self, split_nodes_gdf: gpd.GeoDataFrame):
+        """
+        Set split nodes geodataframe in network object. Overwrites previously defined split nodes
+        """
+        self.split_nodes = split_nodes_gdf
 
     @property
     def split_node_ids(self):
@@ -244,10 +368,10 @@ class RibasimLumpingNetwork(BaseModel):
         self.simulation_code = simulation_code
         self.simulation_path = Path(self.results_dir, simulation_code)
         if self.split_nodes is None:
-            raise ValueError("no split_nodes defined: use .add_split_nodes()")
+            raise ValueError("no split_nodes defined: use .add_split_nodes(), .add_split_nodes_from_file() or .set_split_nodes()")
         if self.nodes_gdf is None or self.edges_gdf is None:
             raise ValueError(
-                "no nodes and/or edges defined: add d-hydro simulation results"
+                "no nodes and/or edges defined: add d-hydro simulation results or hydamo network"
             )
         if self.areas_gdf is None:
             print("no areas defined, will not generate basin_areas")

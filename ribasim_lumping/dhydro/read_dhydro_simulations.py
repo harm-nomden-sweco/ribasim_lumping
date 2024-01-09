@@ -11,8 +11,7 @@ from .read_dhydro_simulations_utils import (
 
 
 def add_dhydro_basis_network(
-    model_dir: Path, 
-    set_name: str, 
+    model_dir: Path,
     simulation_name: str, 
     volume_tool_bat_file: Path, 
     volume_tool_force: bool = False,

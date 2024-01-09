@@ -34,6 +34,7 @@ def split_graph_based_on_split_nodes(
     split_edges = edges[
         edges.edge_no.isin(split_nodes_edges.edge_no.values)
     ].copy()
+    assert len(split_nodes_edges) == len(split_edges)
     split_edges = split_edges[["from_node", "to_node"]].to_dict("tight")["data"]
 
     split_edges = [coor for coor in split_edges if coor in graph.edges]
@@ -173,6 +174,7 @@ def create_basin_areas_based_on_drainage_areas(
     )
     areas = gpd.GeoDataFrame(areas, geometry="geometry", crs=edges.crs)
     areas = areas.sort_values(by="area")
+    areas.geometry = areas.make_valid()  # dissolve can fail because of incorrect geoms. fix those first
     basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=["area"])
     basin_areas["basin"] = basin_areas["basin"].astype(int)
     basin_areas["area_ha"] = basin_areas.geometry.area / 10000.0
@@ -337,19 +339,21 @@ def create_boundary_connections(
     """create boundary-basin connections"""
     print(f" - create Ribasim-Edges between Boundaries and Basins")
     if boundaries is None or nodes is None or basins is None:
-        return None  # , None
+        return None, split_nodes
     
     # merge boundaries with nodes and basins
-    boundaries_conn = boundaries.rename(
-        columns={"geometry": "geometry_boundary"}
-    ).merge(
-        nodes.rename(columns={"node_id": "name"})[["name", "basin"]], 
-        how='inner', 
-        left_on="name", 
-        right_on="name"
-    )
-
-    if len(boundaries_conn) < len(boundaries):
+    try:
+        # initially on column name
+        boundaries_conn = boundaries.rename(
+            columns={"geometry": "geometry_boundary"}
+        ).merge(
+            nodes.rename(columns={"node_no": "name"})[["name", "basin"]], 
+            how='inner', 
+            left_on="name", 
+            right_on="name"
+        )
+    except KeyError:
+        # otherwise on node_no
         boundaries_conn = boundaries.rename(
             columns={"geometry": "geometry_boundary"}
         ).merge(
@@ -417,8 +421,12 @@ def create_boundary_connections(
             lambda x: LineString([x["midpoint"], x["geometry_basin"]]),
             axis=1,
         )
-        waterlevelbnd_conn_in1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in1["boundary_node_id"]
-        waterlevelbnd_conn_in2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in2["boundary_node_id"]
+        if "boundary_node_id" in waterlevelbnd_conn_in1.columns:
+            waterlevelbnd_conn_in1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in1["boundary_node_id"].astype(str)
+            waterlevelbnd_conn_in2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in2["boundary_node_id"].astype(str)
+        else:
+            waterlevelbnd_conn_in1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in1["boundary_node_no"].astype(str)
+            waterlevelbnd_conn_in2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in2["boundary_node_no"].astype(str)
     waterlevelbnd_conn_in1['connection'] = 'boundary_to_split_node'
     waterlevelbnd_conn_in2['connection'] = 'split_node_to_basin'
     
@@ -441,8 +449,12 @@ def create_boundary_connections(
             lambda x: LineString([x["midpoint"], x["geometry_boundary"]]),
             axis=1,
         )
-        waterlevelbnd_conn_out1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out1["boundary_node_id"]
-        waterlevelbnd_conn_out2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out2["boundary_node_id"]
+        if "boundary_node_id" in waterlevelbnd_conn_in1.columns:
+            waterlevelbnd_conn_out1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out1["boundary_node_id"].astype(str)
+            waterlevelbnd_conn_out2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out2["boundary_node_id"].astype(str)
+        else:
+            waterlevelbnd_conn_out1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out1["boundary_node_no"].astype(str)
+            waterlevelbnd_conn_out2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out2["boundary_node_no"].astype(str)
     waterlevelbnd_conn_out1['connection'] = 'basin_to_split_node'
     waterlevelbnd_conn_out2['connection'] = 'split_node_to_boundary'
     
@@ -480,10 +492,12 @@ def create_boundary_connections(
     split_nodes = split_nodes.reset_index(drop=True)
     split_nodes['split_node'] = split_nodes.index + 1
     
-    boundaries_conn = boundaries_conn[[
-        "connection", "boundary", "boundary_node_no", "boundary_node_id", 
-        "basin", "split_node_id", "geometry"
-    ]].merge(
+    boundaries_conn = boundaries_conn[
+        [x for x in 
+         ["connection", "boundary", "boundary_node_no", "boundary_node_id", 
+         "basin", "split_node_id", "geometry"]
+         if x in boundaries_conn.columns]
+    ].merge(
         split_nodes[['split_node_id', 'split_node']], 
         how='left',
         on='split_node_id'
@@ -504,11 +518,14 @@ def regenerate_node_ids(
     """Regenerate ribasim node-id for nodes and edges"""
     print(f" - regenerate node-ids Ribasim-Nodes and Ribasim-Edges")
     # boundaries
-    if "boundary_node_id" in boundaries.columns:
-        boundaries = boundaries.drop(columns=["boundary_node_id"])
-    boundaries.insert(1, "boundary_node_id", boundaries["boundary"])
-        
-    len_boundaries = len(boundaries)
+    if boundaries is not None:
+        if "boundary_node_id" in boundaries.columns:
+            boundaries = boundaries.drop(columns=["boundary_node_id"])
+        boundaries.insert(1, "boundary_node_id", boundaries["boundary"])
+            
+        len_boundaries = len(boundaries)
+    else:
+        len_boundaries = 0
 
     # split_nodes
     if "split_node_node_id" not in split_nodes.columns:

@@ -13,7 +13,6 @@ warnings.simplefilter("ignore", category=NumbaDeprecationWarning)
 warnings.simplefilter("ignore", category=UserWarning)
 warnings.simplefilter("ignore", category=FutureWarning)
 pd.options.mode.chained_assignment = None
-sys.path.append("..\\..\\..\\ribasim\\python\\ribasim")
 import ribasim
 
 
