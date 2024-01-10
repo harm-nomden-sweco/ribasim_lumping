@@ -212,13 +212,45 @@ def create_objects_gdf(
     return gdf
 
 
-def read_geom_file(filepath: Path, layer_name: str = "default", crs: int = 28992):
+def read_geom_file(
+        filepath: Path, 
+        layer_name: str = None,
+        crs: int = 28992,
+        explode_geoms: bool = True,
+        remove_z_dim: bool = False
+    ) -> gpd.GeoDataFrame:
+    """
+    Read file with geometries. If geopackage, supply layer_name.
+
+    Parameters
+    ----------
+    filepath : Path
+        Path to file containing geometries
+    layer_name : str
+        Layer name in geopackage. Needed when file is a geopackage
+    crs : int
+        CRS EPSG code. Default 28992 (RD New)
+    explode_geoms : bool
+        Explode multi-part geometries into single part. Default True
+    remove_z_dim : bool
+        Remove Z dimension from geometries. Only possible for single part Point and LineString.
+        Default False
+
+    Returns
+    -------
+    GeoDataFrame
+    """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Could not find file {os.path.abspath(filepath)}")
     if str(filepath).lower().endswith('.gpkg'):
         gdf = gpd.read_file(filepath, layer=layer_name, crs=crs)
     else:
         gdf = gpd.read_file(filepath, crs=crs)
+    if explode_geoms:
+        gdf = gdf.explode()  # explode to transform multi-part geoms to single
+    if remove_z_dim:
+        gdf.geometry = [Point(g.coords[0][:2]) if isinstance(g, Point) else LineString([c[:2] for c in g.coords])
+                        for g in gdf.geometry.values]  # remove possible Z dimension
     return gdf
 
 

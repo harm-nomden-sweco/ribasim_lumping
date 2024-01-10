@@ -104,22 +104,6 @@ class RibasimLumpingNetwork(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    def read_areas(self, areas_file_path: Path, areas_id_column: str, layer_name: str = None):
-        """
-        Read areas (e.g. "afwateringseenheden"). In case of geopackage, provide layer_name.
-
-        Args:
-            areas_file_path (Path):     Path to file containing areas geometries
-            areas_id_column (str):      (optional) Id column for areas. If not provided, first column will be used for id
-            layer_name (str):           Layer name in geopackage. Needed when file is a geopackage
-                  
-        """
-        areas_gdf = read_geom_file(filepath=areas_file_path, layer_name=layer_name)
-        areas_gdf = areas_gdf.explode()  # explode to transform multi-part geoms to single
-        areas_id_column = areas_id_column if areas_id_column is not None else list(areas_gdf.columns)[0]
-        self.areas_gdf = areas_gdf[[areas_id_column, "geometry"]]
-        print(f" - areas ({len(areas_gdf)}x)")
-
     def add_basis_network(
         self, 
         source_type: str,
@@ -130,8 +114,10 @@ class RibasimLumpingNetwork(BaseModel):
         dhydro_volume_tool_increment: float = 0.1,
         hydamo_network_file: Path = 'network.gpkg',
         hydamo_network_gpkg_layer: str = 'network',
-        boundary_file: Path = 'boundary.gpkg',
-        boundary_gpkg_layer: str = 'boundary',
+        ribasim_input_boundary_file: Path = 'boundary.gpkg',
+        ribasim_input_boundary_gpkg_layer: str = 'boundary',
+        ribasim_input_split_nodes_file: Path = 'split_nodes.gpkg',
+        ribasim_input_split_nodes_gpkg_layer: Path = 'split_nodes',
         hydamo_split_nodes_bufdist: float = 10.0,
         hydamo_boundary_bufdist: float = 10.0,
         hydamo_write_results_to_gpkg: bool = False
@@ -140,29 +126,33 @@ class RibasimLumpingNetwork(BaseModel):
         Add (detailed) base network which will used to derive Ribasim network. Source type can either be "dhydro" or
         "hydamo". 
         If "dhydro", provide arguments for D-HYDRO volume tool (arguments dhydro_volume_*) and model simulation
-        (model_dir, simulation_name).
-        If "hydamo", provide arguments for path to file containing network geometries (hydamo_network_file) and
-        in case of geopackage also the layer name (hydamo_network_gpkg_layer)
+        (model_dir, simulation_name). All necessary information (like boundaries and split nodes) will be derived from
+        the D-HYDRO model data.
+        If "hydamo", provide arguments for paths to files containing network geometries (hydamo_network_file) and
+        in case of geopackage also the layer name (hydamo_network_gpkg_layer). HyDAMO does not contain information for
+        boundaries and split nodes, so these need to be provided additionally as Ribasim input.
 
         Args:
-            source_type (str):                      Source type of network. Options are "dhydro" or "hydamo"
-            dhydro_model_dir (Path):                Directory path to D-HYDRO model
-            dhydro_simulation_name (str):           Name of D-HYDRO model simulation
-            dhydro_volume_tool_bat_file (Path):     Path to D-HYDRO volume tool batch file
-            dhydro_volume_tool_force (bool):        Set to True to force recalculation of D-HYDRO volume. Use False to read pre-calculated 
-                                                    volume in simulation results
-            dhydro_volume_tool_increment (float):   Increment argument (in m) for D-HYDRO volume tool
-            dhydro_volume_tool_bat_file (Path):     Path to D-HYDRO volume tool batch file
-            hydamo_network_file (str):              Path to HyDAMO file containing network geometries
-            hydamo_network_gpkg_layer (str):        Layer name of HyDAMO network file in case it is a geopackage
-            boundary_file (str):                    Path to file containing boundary geometries (additionally needed when using HyDAMO data)
-            boundary_gpkg_layer (str):              Layer name of boundary file in case it is a geopackage
-            hydamo_split_nodes_bufdist (float):     Buffer distance (in meter) to snap split nodes to HyDAMO network
-            hydamo_boundary_bufdist (float):        Buffer distance (in meter) to snap boundaries to HyDAMO network start/end nodes
-            hydamo_write_results_to_gpkg (bool):    Write intermediate results (split nodes, edges, nodes) for HyDAMO network to geopackages
+            source_type (str):                          Source type of network. Options are "dhydro" or "hydamo"
+            dhydro_model_dir (Path):                    Directory path to D-HYDRO model
+            dhydro_simulation_name (str):               Name of D-HYDRO model simulation
+            dhydro_volume_tool_bat_file (Path):         Path to D-HYDRO volume tool batch file
+            dhydro_volume_tool_force (bool):            Set to True to force recalculation of D-HYDRO volume. Use False to read pre-calculated 
+                                                        volume in simulation results
+            dhydro_volume_tool_increment (float):       Increment argument (in m) for D-HYDRO volume tool
+            dhydro_volume_tool_bat_file (Path):         Path to D-HYDRO volume tool batch file
+            hydamo_network_file (str):                  Path to HyDAMO file containing network geometries
+            hydamo_network_gpkg_layer (str):            Layer name of HyDAMO network file in case it is a geopackage
+            ribasim_input_boundary_file (str):          Path to file containing Ribasim input boundary geometries (additionally needed when using HyDAMO data)
+            ribasim_input_boundary_gpkg_layer (str):    Layer name of Ribasim input boundary file in case it is a geopackage
+            ribasim_input_split_nodes_file (str):       Path to file containing Ribasim input split nodes geometries (additionally needed when using HyDAMO data)
+            ribasim_input_split_nodes_gpkg_layer (str): Layer name of Ribasim input split nodes file in case it is a geopackage
+            hydamo_split_nodes_bufdist (float):         Buffer distance (in meter) to snap split nodes to HyDAMO network
+            hydamo_boundary_bufdist (float):            Buffer distance (in meter) to snap boundaries to HyDAMO network start/end nodes
+            hydamo_write_results_to_gpkg (bool):        Write intermediate (HyDAMO) results (split nodes, edges, nodes, boundaries) to geopackages
 
         Returns:
-            gpd.Geo:                                Network
+            gpd.Geo:                                    Network
         """
         results = None
         if source_type == 'dhydro':
@@ -180,44 +170,49 @@ class RibasimLumpingNetwork(BaseModel):
                     self.nodes_gdf, self.boundaries_gdf, self.laterals_gdf, self.weirs_gdf, \
                     self.uniweirs_gdf, self.pumps_gdf, self.orifices_gdf, self.bridges_gdf, \
                     self.culverts_gdf, self.boundaries_data, self.laterals_data, self.volume_data = results
+        
         elif source_type == 'hydamo':
+            # add network from HyDAMO files
             results = add_hydamo_basis_network(
                 hydamo_network_file=hydamo_network_file,
                 hydamo_network_gpkg_layer=hydamo_network_gpkg_layer,
-                boundary_file=boundary_file,
-                boundary_gpkg_layer=boundary_gpkg_layer
             )
             if results is not None:
-                self.branches_gdf, self.edges_gdf, self.nodes_gdf, self.boundaries_gdf = results
-            # Because the HyDAMO network and split nodes locations won't always nicely match up, we need to adjust the
-            # network and split nodes by snapping split nodes to network edges and splitting network edges on split node locations.
-            if self.split_nodes is None:
-                print(" - Split nodes are not yet loaded. No automatic adjustment of HyDAMO network and split nodes is done so they correctly\n"
-                      "     match up. This can lead to crash/exception at later stage. To fix: load split nodes before adding HyDAMO network\n"
-                      "     with .add_split_nodes_from_file() or .set_split_nodes()")
-            else:
-                self.split_nodes = snap_to_network(
-                    snap_type='split_node',
-                    points=self.split_nodes, 
-                    edges=self.edges_gdf, 
-                    nodes=self.nodes_gdf, 
-                    buffer_distance=hydamo_split_nodes_bufdist
-                )   
-                self.split_nodes, self.edges_gdf, self.nodes_gdf = split_edges_by_split_nodes(
-                    self.split_nodes, 
-                    self.edges_gdf, 
-                    buffer_distance=0.5  # some small buffer to be sure but should actually not be necessary because of previous snap action
-                )
+                self.branches_gdf, self.edges_gdf, self.nodes_gdf = results
+            
+            # add Ribasim input boundaries and split nodes from files
+            self.add_split_nodes_from_file(
+                split_nodes_file_path=ribasim_input_split_nodes_file,
+                layer_name=ribasim_input_split_nodes_gpkg_layer,
+            )
+            self.add_boundaries_from_file(
+                boundary_file_path=ribasim_input_boundary_file,
+                layer_name=ribasim_input_boundary_gpkg_layer,
+            )
+            
+            # Because the split node and boundary locations won't always nicely match up with HyDAMO network, we need to adjust this
+            # by snapping split nodes and boundaries to network nodes/edges
+            self.split_nodes = snap_to_network(
+                snap_type='split_node',
+                points=self.split_nodes, 
+                edges=self.edges_gdf, 
+                nodes=self.nodes_gdf, 
+                buffer_distance=hydamo_split_nodes_bufdist,
+            )  
+            self.boundaries_gdf = snap_to_network(
+                snap_type='boundary',
+                points=self.boundaries_gdf, 
+                edges=self.edges_gdf, 
+                nodes=self.nodes_gdf, 
+                buffer_distance=hydamo_boundary_bufdist,
+            )
 
-            # Also snap boundaries to network but only start/end nodes
-            if self.boundaries_gdf is not None:
-                self.boundaries_gdf = snap_to_network(
-                    snap_type='boundary',
-                    points=self.boundaries_gdf, 
-                    edges=self.edges_gdf, 
-                    nodes=self.nodes_gdf, 
-                    buffer_distance=hydamo_boundary_bufdist
-                ) 
+            # split edges by split node locations so we end up with an network where split nodes are only located on nodes (and not edges)
+            self.split_nodes, self.edges_gdf, self.nodes_gdf = split_edges_by_split_nodes(
+                self.split_nodes, 
+                self.edges_gdf, 
+                buffer_distance=0.1,  # some small buffer to be sure but should actually not be necessary because of previous snap actions
+            )
 
             # reset indexes of gdfs, rename some columns and do some automatic corrections
             for gdf in [self.split_nodes, self.edges_gdf, self.nodes_gdf, self.boundaries_gdf]:
@@ -229,11 +224,11 @@ class RibasimLumpingNetwork(BaseModel):
                 self.boundaries_gdf['quantity'] = self.boundaries_gdf['quantity'].replace({'FlowBoundary': 'dischargebnd', 'LevelBoundary': 'waterlevelbnd'})
             else:
                 self.boundaries_gdf['quantity'] = 'waterlevelbnd'  # add default bnd type if not present in gdf
-            # remove non-snapped split nodes
+            
+            # remove non-snapped split nodes and boundaries
             print("Remove non-snapped split nodes from dataset")
             split_nodes_not_on_network = self.split_nodes.loc[(self.split_nodes['edge_no'] == -1) & (self.split_nodes['node_no'] == -1)]
             self.split_nodes = self.split_nodes.loc[[i not in split_nodes_not_on_network.index for i in self.split_nodes.index]]
-            # remove non-snapped boundaries
             print("Remove non-snapped boundaries from dataset")
             boundaries_not_on_network = self.boundaries_gdf.loc[self.boundaries_gdf['node_no'] == -1]
             self.boundaries_gdf = self.boundaries_gdf.loc[[i not in boundaries_not_on_network.index for i in self.boundaries_gdf.index]]
@@ -277,6 +272,56 @@ class RibasimLumpingNetwork(BaseModel):
         else:
             print(f"  x for this source type ({source_type}) no model type is added")
         return self.his_data, self.map_data
+
+    def add_areas_from_file(
+            self, 
+            areas_file_path: Path, 
+            areas_id_column: str, 
+            layer_name: str = None, 
+            crs: int = 28992
+        ):
+        """
+        Add areas (e.g. "afwateringseenheden") from file. In case of geopackage, provide layer_name.
+        Overwrites previously defined areas
+
+        Args:
+            areas_file_path (Path):     Path to file containing areas geometries
+            areas_id_column (str):      (optional) Id column for areas. If not provided, first column will be used for id
+            layer_name (str):           Layer name in geopackage. Needed when file is a geopackage
+            crs (int):                  (optional) CRS EPSG code. Default 28992 (RD New) 
+        """
+        print('Reading areas from file...')
+        areas_gdf = read_geom_file(
+            filepath=areas_file_path, 
+            layer_name=layer_name, 
+            crs=crs
+        )
+        areas_id_column = areas_id_column if areas_id_column is not None else list(areas_gdf.columns)[0]
+        self.areas_gdf = areas_gdf[[areas_id_column, "geometry"]]
+        print(f" - areas ({len(areas_gdf)}x)")
+    
+    def add_boundaries_from_file(
+            self, 
+            boundary_file_path: Path,
+            layer_name: str = None,
+            crs: int = 28992
+        ):
+        """
+        Add Ribasim boundaries from file. In case of geopackage, provide layer_name. 
+        Overwrites previously defined boundaries
+
+        Args:
+            boundary_file_path (Path):  Path to file containing boundary geometries
+            layer_name (str):           Layer name in geopackage. Needed when file is a geopackage
+            crs (int):                  (optional) CRS EPSG code. Default 28992 (RD New)     
+        """
+        print('Reading boundaries from file...')
+        self.boundaries_gdf = read_geom_file(
+            filepath=boundary_file_path, 
+            layer_name=layer_name, 
+            crs=crs,
+            remove_z_dim=True
+        )
 
     def add_split_nodes(
         self,
@@ -322,12 +367,27 @@ class RibasimLumpingNetwork(BaseModel):
         )
         return self.split_nodes
     
-    def add_split_nodes_from_file(self, split_nodes_file: Path, gpkg_layer_name: str = "default", crs: int = 28992):
+    def add_split_nodes_from_file(
+            self, 
+            split_nodes_file_path: Path, 
+            layer_name: str = None, 
+            crs: int = 28992
+        ):
         """
         Add split nodes in network object from file. Overwrites previously defined split nodes
+
+        Args:
+            split_nodes_file_path (Path):   Path to file containing split node geometries
+            layer_name (str):               Layer name in geopackage. Needed when file is a geopackage
+            crs (int):                      (optional) CRS EPSG code. Default 28992 (RD New) 
         """
-        self.split_nodes = read_geom_file(split_nodes_file, gpkg_layer_name, crs)
-        self.split_nodes = self.split_nodes.explode()
+        print('Reading split nodes from file...')
+        self.split_nodes = read_geom_file(
+            filepath=split_nodes_file_path, 
+            layer_name=layer_name, 
+            crs=crs,
+            remove_z_dim=True    
+        )
 
 
     def set_split_nodes(self, split_nodes_gdf: gpd.GeoDataFrame):
