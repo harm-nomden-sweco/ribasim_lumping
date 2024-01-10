@@ -219,12 +219,16 @@ class RibasimLumpingNetwork(BaseModel):
                     buffer_distance=hydamo_boundary_bufdist
                 ) 
 
-            # reset indexes of gdfs and rename some columns
+            # reset indexes of gdfs, rename some columns and do some automatic corrections
             for gdf in [self.split_nodes, self.edges_gdf, self.nodes_gdf, self.boundaries_gdf]:
                 gdf.reset_index(drop=True, inplace=True)
                 gdf.rename(columns={'split_type': 'object_type', 'Type': 'quantity', 'boundary_id': 'boundary'}, inplace=True)
-                if 'quantity' in gdf.columns:
-                    gdf['quantity'] = gdf['quantity'].replace({'FlowBoundary': 'dischargebnd', 'LevelBoundary': 'waterlevelbnd'})
+            if 'split_node' not in self.split_nodes.columns:
+                self.split_nodes['split_node'] = self.split_nodes.index
+            if 'quantity' in self.boundaries_gdf.columns:
+                self.boundaries_gdf['quantity'] = self.boundaries_gdf['quantity'].replace({'FlowBoundary': 'dischargebnd', 'LevelBoundary': 'waterlevelbnd'})
+            else:
+                self.boundaries_gdf['quantity'] = 'waterlevelbnd'  # add default bnd type if not present in gdf
             # remove non-snapped split nodes
             print("Remove non-snapped split nodes from dataset")
             split_nodes_not_on_network = self.split_nodes.loc[(self.split_nodes['edge_no'] == -1) & (self.split_nodes['node_no'] == -1)]
