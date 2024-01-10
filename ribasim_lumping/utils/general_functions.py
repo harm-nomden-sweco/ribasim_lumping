@@ -428,9 +428,13 @@ def split_edges_by_split_nodes(
     ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     """
     Splits edges (lines) by split node locations. Split nodes should be (almost) perfectly be aligned to edges (within buffer distance).
-    If not, use .snap_nodes_to_edges() before to align them to edges within a buffer distance. The start/end nodes will be regenerated
-    because the edges are split. The edge no and node no column value in split nodes gdf will also be updated because of that.
-    Returns new (splitted) edges and new updated (start/end)nodes and split nodes for those edges
+    If not, use .snap_nodes_to_edges() before to align them to edges within a buffer distance. 
+    
+    If split nodes gdf contains edge_no column (which is filled with only integers), only those edges will be split. If the column is missing
+    from gdf or contains None values, it will be ignored and the default (more time consuming) approach will be used.
+
+    The start/end nodes will be regenerated after the edges are split. The edge no and node no column value in split nodes gdf will also 
+    be updated because of that. Returns new (splitted) edges and new updated (start/end)nodes and split nodes for those edges
 
     Parameters
     ----------
@@ -447,72 +451,69 @@ def split_edges_by_split_nodes(
     """
 
     print("Split edges by split nodes locations...")
-    edges_to_add = gpd.GeoDataFrame()
-    edges_ix_to_remove = []
-    tmp = gpd.GeoDataFrame()
-    node_no_col_present = 'node_no' in split_nodes.columns
+    split_nodes['edge_no'] = [None] * len(split_nodes)
     edge_no_col_present = 'edge_no' in split_nodes.columns
-    for i, split_node in enumerate(split_nodes.geometry):
-        check_default = True
-        line, line_gdf_index, split_point_on_line = None, None, None
-        # if node_no column is present in split_nodes and value is not -1, skip (because 
-        # split node is on same location as start/end node of an edge)
-        if node_no_col_present:
-            if split_nodes.iloc[i]['node_no'] != -1:
-                continue
-        # if edge_no column is present in split_nodes and value is not -1, split that particular edge
-        # to speed-up
-        if edge_no_col_present:
-            if split_nodes.iloc[i]['edge_no'] != -1:
-                tmp = edges[edges['edge_no'] == split_nodes.iloc[i]['edge_no']]
-                line, line_gdf_index, split_point_on_line = tmp.geometry.values[0], tmp.index.values[0], split_node
-                check_default = False
-        # otherwise, use the default approach
-        if check_default:
-            # if split node is not within buffer distance from edge, skip
-            ix = edges.geometry.intersects(split_node.buffer(buffer_distance))
-            if not any(ix):
-                continue
-            # continue with only lines near node to speed-up
-            lines, lines_gdf_index = edges.geometry.values[ix], edges.index.values[ix]
-            # skip if split node is located within buffer distance from start/end node of edge
-            start_end_nodes = np.array([l.interpolate(x) for l in lines for x in [0, l.length]], dtype=object)
-            if any([n.intersects(split_node.buffer(buffer_distance)) for n in start_end_nodes]):
-                continue
-            # now only remaining case should be that the edge needs to be split by split node
-            # do this to edge closest to split node
-            _nodes = np.array([l.interpolate(l.project(split_node)) for l in lines], dtype=object)
-            ix = np.argmin([n.distance(split_node) for n in _nodes])
-            line, line_gdf_index, split_point_on_line = lines[ix], lines_gdf_index[ix], _nodes[ix]
+    edge_no_col_present = all([x is not None for x in split_nodes['edge_no']]) if edge_no_col_present else False
+    edges_orig = edges.copy()
+    # to speed-up splitting and if edge_no column is present in split nodes gdf, only
+    # split those edges
+    if edge_no_col_present:
+        for edge_no in split_nodes['edge_no'].unique():
+            if edge_no == -1:
+                continue  # skip
+            split_points = split_nodes.loc[split_nodes['edge_no'] == edge_no].geometry.values
+            edge = edges_orig.loc[edges_orig['edge_no'] == edge_no, 'geometry'].values[0]
+            splitted_edges = split_line_in_multiple(edge, distances_along_line=[edge.project(p) for p in split_points])
+            if len(splitted_edges) == 0:
+                continue  # skip because edge is (somehow) not splitted
+            # update (original) edges gdf
+            edge_row = edges_orig.loc[edges_orig['edge_no'] == edge_no]
+            edges_to_add = pd.concat([edge_row]*len(splitted_edges))
+            edges_to_add = gpd.GeoDataFrame(
+                edges_to_add, 
+                geometry=splitted_edges
+            ).set_index(np.arange(len(splitted_edges)) + 1 + edges.index.max())
+            edges = pd.concat([edges, edges_to_add], axis=0, ignore_index=True)
+            edges.drop(index=edges_orig.loc[edges_orig['edge_no'] == edge_no].index)
+    # otherwise, do default approach
+    else:
+        # loop over edges so we can directly split an edge with multiple split nodes in one go
+        for i, edge in enumerate(edges_orig.geometry):
+            # only check split nodes that are within buffer distance of edge
+            split_points = split_nodes.geometry.values[split_nodes.geometry.intersects(edge.buffer(buffer_distance))]
+            if len(split_points) == 0:
+                continue  # skip if no split nodes found
+            # also skip split nodes that are located within buffer distance from start/end nodes of edge
+            nodes = np.array([edge.interpolate(x) for x in [0, edge.length]], dtype=object)
+            split_points = np.array([p for p in split_points 
+                                     if not any([p.intersects(n.buffer(buffer_distance)) 
+                                                 for n in nodes])], 
+                                    dtype=object)
+            if len(split_points) == 0:
+                continue  # skip if no split nodes are left
+            # split edge
+            splitted_edges = split_line_in_multiple(edge, distances_along_line=[edge.project(p) for p in split_points])
+            if len(splitted_edges) == 0:
+                continue  # skip because edge is (somehow) not splitted
+            # update (original) edges gdf
+            edge_row = edges_orig.loc[edges_orig.index.values[i]].to_frame().T
+            edges_to_add = pd.concat([edge_row]*len(splitted_edges))
+            edges_to_add = gpd.GeoDataFrame(
+                edges_to_add,
+                geometry=splitted_edges
+            ).set_index(np.arange(len(splitted_edges)) + 1 + edges.index.max())
+            edges = pd.concat([edges, edges_to_add], axis=0)
+            edges.drop(index=edges_orig.index.values[i], inplace=True)
 
-        # split line
-        splitted_lines = split_line_in_two(line, distance_along_line=line.project(split_point_on_line))
-        if len(splitted_lines) >= 1:
-            # create temporary frame where metainformation for splitted lines is duplicated
-            tmp = edges.loc[line_gdf_index].to_frame().T
-            if len(splitted_lines) >= 2:
-                for j in range(len(splitted_lines)-1):
-                    tmp = pd.concat([tmp, edges.loc[line_gdf_index].to_frame().T], axis=0)
-            tmp = gpd.GeoDataFrame(tmp[[c for c in tmp.columns if c != 'geometry']], 
-                                geometry=splitted_lines, 
-                                crs=edges.crs)
-            edges_to_add = gpd.GeoDataFrame(pd.concat([edges_to_add, tmp], axis=0, ignore_index=True))
-            edges_ix_to_remove.append(line_gdf_index)
-        else:
-            continue  # skip
-
-    # remove splitted edges and add the individual splitted ones
-    edges = edges.loc[[i for i in edges.index if i not in edges_ix_to_remove]]
-    edges = gpd.GeoDataFrame(pd.concat([edges, edges_to_add], axis=0, ignore_index=True))
-    edges['edge_no'] = range(len(edges))  # reset edge no
     # update branch id column if present
     if 'branch_id' in edges.columns:
         n_max = np.max(np.unique(edges['branch_id'], return_counts=True)[1])  # max group size in groupby
         split_nrs = np.arange(start=1, stop=n_max+1)
-        split_nrs = edges.groupby('branch_id')['edge_no'].transform(lambda x: split_nrs[:len(x)])
-        max_splits = edges.groupby('branch_id')['edge_no'].transform(lambda x: len(x))
+        split_nrs = edges.groupby('branch_id')['from_node'].transform(lambda x: split_nrs[:len(x)])
+        max_splits = edges.groupby('branch_id')['from_node'].transform(lambda x: len(x))
         edges['branch_id'] = [f'{b}_{s}' if m > 1 else b for b, s, m in zip(edges['branch_id'], split_nrs, max_splits)]
     # regenerate start/end nodes of edges
+    edges['edge_no'] = range(len(edges))  # reset edge no
     edges, nodes = generate_nodes_from_edges(edges)
     # update edge no and node no columns in split nodes gdf
     split_nodes = get_node_no_and_edge_no_for_points(split_nodes, edges, nodes)
@@ -520,7 +521,7 @@ def split_edges_by_split_nodes(
 
 
 def split_line_in_two(line: LineString, distance_along_line: float) -> List[LineString]:
-    # Cuts a line in two at a distance from its starting point
+    # Cuts a line in two at a distance from the line starting point
     if distance_along_line <= 0.0 or distance_along_line >= line.length:
         return [LineString(line)]
     coords = list(line.coords)
@@ -534,3 +535,29 @@ def split_line_in_two(line: LineString, distance_along_line: float) -> List[Line
                 return [LineString(coords[:i] + [(cp.x, cp.y)]), LineString([(cp.x, cp.y)] + coords[i:])]
             else:
                 return [LineString(coords[:i] + [(cp.x, cp.y, cp.z)]), LineString([(cp.x, cp.y, cp.z)] + coords[i:])]
+
+
+def split_line_in_multiple(line: LineString, distances_along_line: Union[List[Union[float, int]], np.ndarray]) -> List[LineString]:
+    # Cuts a line in multiple sections at distances from the line starting point
+    lines = []
+    distances_along_line = sorted(distances_along_line)  # distances should by in sorted order for loop below to work
+    for i, d in enumerate(distances_along_line):
+        if i == 0:
+            ls = split_line_in_two(line, distances_along_line[i])
+            if len(distances_along_line) == 1:
+                lines = ls
+                break
+            else:
+                lines.append(ls[0])
+                new_line = ls[1]
+        else:
+            new_d = distances_along_line[i] - distances_along_line[i-1]
+            if new_d == 0.0:
+                continue
+            ls = split_line_in_two(new_line, new_d)
+            if i == (len(distances_along_line) - 1):
+                lines.extend(ls)
+            else:
+                lines.append(ls[0])
+                new_line = ls[1]
+    return lines
