@@ -414,6 +414,8 @@ def snap_points_to_nodes_and_edges(
                         print(f"  DEBUG - Point with index {points.index.values[i]} can be snapped to node no {node_no} "
                               f"but number of connected edges to node ({len(_edges)}) is equal or higher than limit "
                               f"({n_edges_to_node_limit}). Don't snap to node and try to snap to edge. Please inspect manually")
+                else:
+                    check = True
             # if check is True, a valid node for point to snap to has been found
             if check:
                 new_points[i] = new_point

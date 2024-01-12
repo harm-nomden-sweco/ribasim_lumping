@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import networkx as nx
-from shapely.geometry import Point, LineString
+from shapely.geometry import Point, LineString, Polygon, MultiPolygon
 
 
 def create_graph_based_on_nodes_edges(
@@ -200,9 +200,15 @@ def create_basin_areas_based_on_drainage_areas(
         areas["basin"] = np.nan
         return areas, None
     edges_sel = edges.loc[edges["basin"] != -1].copy()
-    #edges_sel["edge_length"] = edges_sel.geometry.length
+    # fix invalid area geometries
     areas["area"] = areas.index
     areas_orig = areas.copy()
+    areas.geometry = areas.make_valid()
+    # due to make_valid() GeometryCollections can be generated. Only take the (multi)polygon from those collections
+    areas.geometry = [[g for g in gs.geoms if (isinstance(g, Polygon) or isinstance(g, MultiPolygon))][0] 
+                      if hasattr(gs, 'geoms') 
+                      else gs
+                      for gs in areas.geometry]
     # spatial join edges to areas that intersect
     areas = areas.sjoin(edges_sel[["basin", "geometry"]])
     # we want to select the edge which is the longest within an area to ultimately select 
