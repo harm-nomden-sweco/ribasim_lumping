@@ -7,10 +7,14 @@ from shapely.geometry import Point, LineString
 
 
 def create_graph_based_on_nodes_edges(
-    nodes: gpd.GeoDataFrame, edges: gpd.GeoDataFrame
-) -> nx.DiGraph:
-    """create networkx graph based on geographic nodes and edges.
-    TODO: maybe a faster implementation possible"""
+        nodes: gpd.GeoDataFrame, 
+        edges: gpd.GeoDataFrame
+    ) -> nx.DiGraph:
+    """
+    create networkx graph based on geographic nodes and edges.
+    TODO: maybe a faster implementation possible
+    """
+
     graph = nx.DiGraph()
     if nodes is not None:
         for i, node in nodes.iterrows():
@@ -25,10 +29,25 @@ def create_graph_based_on_nodes_edges(
 
 
 def split_graph_based_on_split_nodes(
-    graph: nx.DiGraph, split_nodes: gpd.GeoDataFrame, edges: gpd.GeoDataFrame
-) -> nx.DiGraph:
-    """split networkx graph at split_edge or split_node"""
+        graph: nx.DiGraph, 
+        split_nodes: gpd.GeoDataFrame, 
+        edges: gpd.GeoDataFrame
+    ) -> Tuple[nx.DiGraph, gpd.GeoDataFrame]:
+    """
+    Split networkx graph at split_edge or split_node. It removes the original edges(s)/node(s) which are the same as split_edge and
+    split_node and inserts new edges and nodes such that the graph becomes disconnected at the split point. After this edges don't
+    connect to 1 node (at split point) but each end in each own new node. Because of this removing and adding edges and nodes in the
+    graph, these new nodes no in graph are added to split_nodes gdf and also returned as result of this function.
+    """
+
+    split_nodes = split_nodes.copy()  # copy to make sure gdf variable is not linked
+    split_nodes['graph_node_no'] = pd.Series([-1] * len(split_nodes), index=split_nodes.index, dtype=object)  # force dtype object to be able to insert tuples
+
     # split on edge: delete edge, create 2 nodes, create 2 edges
+    # if all edge no in split nodes gdf are -1, than no splitting of edges are done
+    # TODO: although edge stuff below works, it is actually better to split network at split nodes at earlier stage
+    #       this will result in all edge no being -1 and only values for node no. so maybe check on that all edge_no
+    #       values need to be -1 should be better.
     split_nodes_edges = split_nodes[split_nodes.edge_no != -1].copy()
 
     split_edges = edges[
@@ -38,8 +57,6 @@ def split_graph_based_on_split_nodes(
     split_edges = split_edges[["from_node", "to_node"]].to_dict("tight")["data"]
 
     split_edges = [coor for coor in split_edges if coor in graph.edges]
-
-    graph.remove_edges_from(split_edges)
 
     split_nodes_edges["new_node_no1"] = (
         998_000_000_000 + split_nodes_edges.edge_no * 1_000 + 1
@@ -54,58 +71,86 @@ def split_graph_based_on_split_nodes(
     split_nodes_edges["upstream_node_no"] = [e[0] for e in split_edges]
     split_nodes_edges["downstream_node_no"] = [e[1] for e in split_edges]
 
+    # remove splitted edges from graph and insert the newly split ones
+    graph.remove_edges_from(split_edges)
     for i_edge, new in split_nodes_edges.iterrows():
         graph.add_node(new.new_node_no1, pos=new.new_node_pos)
         graph.add_node(new.new_node_no2, pos=new.new_node_pos)
         graph.add_edge(new.upstream_node_no, new.new_node_no1)
         graph.add_edge(new.new_node_no2, new.downstream_node_no)
+    # update split nodes gdf with new node no
+    new_graph_node_no = [(x1, x2) for x1, x2 in zip(split_nodes_edges['new_node_no1'], split_nodes_edges['new_node_no1'])]
+    split_nodes.loc[split_nodes_edges.index, 'graph_node_no'] = pd.Series(new_graph_node_no, index=split_nodes_edges.index, dtype=object)
 
     # split_node: delete node and delete x edges, create x nodes, create x edges
     split_nodes_nodes = split_nodes[split_nodes.node_no != -1]
+    new_graph_node_no = []
     for split_node_id in split_nodes_nodes.node_no.values:
         if split_node_id not in graph:
+            new_graph_node_no.append(-1)
             continue
         split_node_pos = graph.nodes[split_node_id]["pos"]
         split_edges = [e for e in list(graph.edges) if split_node_id in e]
+        
+        # remove old edges and node and insert new ones
         graph.remove_edges_from(split_edges)
         graph.remove_node(split_node_id)
-
+        new_graph_no = []
         for i_edge, new_edge in enumerate(split_edges):
             new_node_id = 999_000_000_000 + split_node_id * 1_000 + i_edge
             graph.add_node(new_node_id, pos=split_node_pos)
             new_edge_adj = [e if e != split_node_id else new_node_id for e in new_edge]
             graph.add_edge(new_edge_adj[0], new_edge_adj[1])
+            new_graph_no.append(new_node_id)
+        new_graph_node_no.append(tuple(new_graph_no))
+    # update split nodes gdf with new node no
+    split_nodes.loc[split_nodes_nodes.index, 'graph_node_no'] = pd.Series(new_graph_node_no, index=split_nodes_nodes.index, dtype=object)
     print(f" - split network graph at split locations ({len(split_nodes)}x)")
-    return graph
+    return graph, split_nodes
 
 
 def add_basin_code_from_network_to_nodes_and_edges(
-    graph: nx.DiGraph,
-    nodes: gpd.GeoDataFrame,
-    edges: gpd.GeoDataFrame,
-    split_nodes: gpd.GeoDataFrame,
-):
-    """add basin (subgraph) code to nodes and edges"""
+        graph: nx.DiGraph,
+        nodes: gpd.GeoDataFrame,
+        edges: gpd.GeoDataFrame,
+        split_nodes: gpd.GeoDataFrame,
+    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """
+    add basin (subgraph) code to nodes and edges
+    """
+
+    edges, nodes, split_nodes = edges.copy(), nodes.copy(), split_nodes.copy()  # copy to make sure gdf variable is not linked
     subgraphs = list(nx.weakly_connected_components(graph))
     if nodes is None or edges is None:
         return None, None
     nodes["basin"] = -1
     edges["basin"] = -1
+    # prepare indexer to speed-up finding original node no for graph node no
+    ix = split_nodes.index[(split_nodes['graph_node_no'] == -1) | pd.isna(split_nodes['graph_node_no'])]
+    split_nodes.loc[ix, 'graph_node_no'] = pd.Series([(x,) for x in split_nodes.loc[ix, 'node_no']], index=ix, dtype=object)
+    orig_node_indexer = {gn: no for no, gns in zip(split_nodes['node_no'], split_nodes['graph_node_no']) for gn in list(gns)}
     for i, subgraph in enumerate(subgraphs):
-        node_ids = list(subgraph) + list(split_nodes.node_no.values)
-        edges.loc[
-            edges["from_node"].isin(node_ids) & edges["to_node"].isin(node_ids),
-            "basin",
-        ] = (
-            i + 1
-        )
-        nodes.loc[nodes["node_no"].isin(list(subgraph)), "basin"] = i + 1
+        # because in the graph nodes and edges can be changed to generate subgraphs we need to find
+        # the original node no for the changed nodes. this information is stored in split_nodes_gdf
+        node_ids = list(subgraph)
+        orig_node_ids = [orig_node_indexer[n] if n in orig_node_indexer.keys() else n for n in node_ids]
+
+        edges.loc[edges["from_node"].isin(orig_node_ids) & edges["to_node"].isin(orig_node_ids), "basin"] = i + 1
+        nodes.loc[nodes["node_no"].isin(orig_node_ids), "basin"] = i + 1
     print(f" - define numbers Ribasim-Basins ({len(subgraphs)}x) and join edges/nodes")
     return nodes, edges
 
 
-def check_if_split_node_is_used(split_nodes, nodes, edges):
-    """check whether split_nodes are used, split_nodes and split_edges"""
+def check_if_split_node_is_used(
+        split_nodes: gpd.GeoDataFrame, 
+        nodes: gpd.GeoDataFrame, 
+        edges: gpd.GeoDataFrame,
+    ) -> gpd.GeoDataFrame:
+    """
+    check whether split_nodes are used, split_nodes and split_edges
+    """
+
+    split_nodes = split_nodes.copy()  # copy to make sure gdf variable is not linked
     split_nodes["status"] = True
 
     # check if edges connected to split_nodes have the same basin code
@@ -117,9 +162,7 @@ def check_if_split_node_is_used(split_nodes, nodes, edges):
         neighbours = nodes[nodes.node_no.isin(from_nodes + to_nodes)]
         if len(neighbours.basin.unique()) == 1:
             split_nodes_not_used.append(split_node_id)
-    split_nodes.loc[
-        split_nodes[split_nodes.node_no.isin(split_nodes_not_used)].index, "status"
-    ] = False
+    split_nodes.loc[split_nodes[split_nodes.node_no.isin(split_nodes_not_used)].index, "status"] = False
 
     # check if nodes connected to split_edge have the same basin code
     split_edge_ids = [v for v in split_nodes.edge_no.values if v != -1]
@@ -130,24 +173,25 @@ def check_if_split_node_is_used(split_nodes, nodes, edges):
         neighbours = nodes[nodes.node_no.isin(end_nodes + start_nodes)]
         if len(neighbours.basin.unique()) == 1:
             split_edges_not_used.append(split_edge_id)
-    split_nodes.loc[
-        split_nodes[split_nodes.edge_no.isin(split_edges_not_used)].index, "status"
-    ] = False
+    split_nodes.loc[split_nodes[split_nodes.edge_no.isin(split_edges_not_used)].index, "status"] = False
 
     split_nodes["object_type"] = split_nodes["object_type"].fillna("manual")
     split_nodes["split_type"] = split_nodes["object_type"]
     split_nodes.loc[~split_nodes.status, "split_type"] = "no_split"
-    print(
-        f" - check whether each split location results in a split ({len(split_edges_not_used)} not used)"
-    )
+    print(f" - check whether each split location results in a split ({len(split_nodes.loc[~split_nodes['status']])} not used)")
     return split_nodes
 
 
 def create_basin_areas_based_on_drainage_areas(
-    edges: gpd.GeoDataFrame, areas: gpd.GeoDataFrame
-):
-    """find areas with spatial join on edges. add subgraph code to areas
-    and combine all areas with certain subgraph code into one basin"""
+        edges: gpd.GeoDataFrame, 
+        areas: gpd.GeoDataFrame
+    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """
+    find areas with spatial join on edges. add subgraph code to areas
+    and combine all areas with certain subgraph code into one basin
+    """
+
+    edges, areas = edges.copy(), areas.copy()  # copy to make sure gdf variable is not linked
     if areas is None:
         return None, None
     else:
@@ -155,18 +199,27 @@ def create_basin_areas_based_on_drainage_areas(
     if edges is None:
         areas["basin"] = np.nan
         return areas, None
-    edges_sel = edges[edges["basin"] != -1].copy()
-    edges_sel["edge_length"] = edges_sel.geometry.length
+    edges_sel = edges.loc[edges["basin"] != -1].copy()
+    #edges_sel["edge_length"] = edges_sel.geometry.length
     areas["area"] = areas.index
     areas_orig = areas.copy()
-    areas = areas.sjoin(edges_sel[["basin", "edge_length", "geometry"]])
+    # spatial join edges to areas that intersect
+    areas = areas.sjoin(edges_sel[["basin", "geometry"]])
+    # we want to select the edge which is the longest within an area to ultimately select 
+    # the right basin code
+    edge_lengths = [gpd.GeoDataFrame(edges_sel.loc[ir].to_frame().T, geometry='geometry').clip(a).geometry.length.values[0] 
+                    for a, ir in zip(areas.geometry, areas['index_right'])]
+    areas['edge_length'] = edge_lengths
     areas = areas.drop(columns=["index_right"]).reset_index(drop=True)
     areas = areas.groupby(by=["area", "basin"], as_index=False).agg(
         {"edge_length": "sum"}
     )
+    # this sorts first such that max edge length is first item and in drop_duplicates that first item will be kept
+    # effectively method to get areas with basin code based on max edge length within area
     areas = areas.sort_values(
         by=["area", "edge_length"], ascending=[True, False]
     ).drop_duplicates(subset=["area"], keep="first")
+    # insert area geometries back into gdf
     areas = (
         areas[["area", "basin", "edge_length"]]
         .sort_values(by="area")
@@ -185,8 +238,14 @@ def create_basin_areas_based_on_drainage_areas(
     return areas, basin_areas
 
 
-def create_basins_based_on_subgraphs_and_nodes(graph, nodes):
-    """create basin nodes based on basin_areas or nodes"""
+def create_basins_based_on_subgraphs_and_nodes(
+        graph: nx.DiGraph, 
+        nodes: gpd.GeoDataFrame,
+    ) -> gpd.GeoDataFrame:
+    """
+    create basin nodes based on basin_areas or nodes
+    """
+
     connected_components = list(nx.weakly_connected_components(graph))
     centralities = {}
 
@@ -217,6 +276,7 @@ def create_basins_based_on_subgraphs_and_nodes(graph, nodes):
 
 def check_if_nodes_edges_within_basin_areas(nodes, edges, basin_areas):
     """ "check whether nodes assigned to a basin are also within the polygon assigned to that basin"""
+    edges, nodes, basin_areas = edges.copy(), nodes.copy(), basin_areas.copy()  # copy to make sure gdf variable is not linked
     if basin_areas is None:
         nodes["basin_area"] = -1
         nodes["basin_check"] = True
@@ -330,14 +390,18 @@ def create_basin_connections(
 
 
 def create_boundary_connections(
-    boundaries: gpd.GeoDataFrame,
-    nodes: gpd.GeoDataFrame,
-    edges: gpd.GeoDataFrame,
-    basins: gpd.GeoDataFrame,
-    split_nodes: gpd.GeoDataFrame,
-) -> Tuple[gpd.GeoDataFrame]:
-    """create boundary-basin connections"""
+        boundaries: gpd.GeoDataFrame,
+        nodes: gpd.GeoDataFrame,
+        edges: gpd.GeoDataFrame,
+        basins: gpd.GeoDataFrame,
+        split_nodes: gpd.GeoDataFrame,
+    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """
+    create boundary-basin connections
+    """
+
     print(f" - create Ribasim-Edges between Boundaries and Basins")
+    split_nodes = split_nodes.copy()  # copy to make sure gdf variable is not linked
     if boundaries is None or nodes is None or basins is None:
         return None, split_nodes
     
@@ -506,16 +570,19 @@ def create_boundary_connections(
 
 
 def regenerate_node_ids(
-    boundaries: gpd.GeoDataFrame,
-    split_nodes: gpd.GeoDataFrame, 
-    basins: gpd.GeoDataFrame,
-    basin_connections: gpd.GeoDataFrame,
-    boundary_connections: gpd.GeoDataFrame,
-    basin_areas: gpd.GeoDataFrame,
-    nodes: gpd.GeoDataFrame,
-    edges: gpd.GeoDataFrame
-):
-    """Regenerate ribasim node-id for nodes and edges"""
+        boundaries: gpd.GeoDataFrame,
+        split_nodes: gpd.GeoDataFrame, 
+        basins: gpd.GeoDataFrame,
+        basin_connections: gpd.GeoDataFrame,
+        boundary_connections: gpd.GeoDataFrame,
+        basin_areas: gpd.GeoDataFrame,
+        nodes: gpd.GeoDataFrame,
+        edges: gpd.GeoDataFrame
+    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """
+    Regenerate ribasim node-id for nodes and edges
+    """
+
     print(f" - regenerate node-ids Ribasim-Nodes and Ribasim-Edges")
     # boundaries
     if boundaries is not None:
@@ -594,13 +661,16 @@ def regenerate_node_ids(
 
 
 def generate_ribasim_types_for_all_split_nodes(
-    boundaries: gpd.GeoDataFrame, 
-    split_nodes: gpd.GeoDataFrame, 
-    basins: gpd.GeoDataFrame, 
-    split_node_type_conversion: Dict, 
-    split_node_id_conversion: Dict
-):
-    """"Generate Ribasim Types for all split nodes"""
+        boundaries: gpd.GeoDataFrame, 
+        split_nodes: gpd.GeoDataFrame, 
+        basins: gpd.GeoDataFrame, 
+        split_node_type_conversion: Dict, 
+        split_node_id_conversion: Dict,
+    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """"
+    Generate Ribasim Types for all split nodes
+    """
+
     print(f" - define Ribasim-Nodes types based on input conversion table(s)")
     # Basins
     basins["ribasim_type"] = "Basin"
@@ -613,9 +683,11 @@ def generate_ribasim_types_for_all_split_nodes(
     }
     boundaries["ribasim_type"] = boundaries["quantity"].replace(boundary_conversion)
     # Split nodes
-    if not split_nodes[split_nodes.status==False].empty:
-        print(f"   * {len(split_nodes[split_nodes.status==False])} split_nodes resulting in no_split (removed)")
-        split_nodes = split_nodes[split_nodes.status==True]
+    removed_split_nodes = None
+    if not split_nodes[~split_nodes.status].empty:
+        removed_split_nodes = split_nodes[~split_nodes.status].copy()
+        print(f"   * {len(removed_split_nodes)} split_nodes resulting in no_split")
+        split_nodes = split_nodes[split_nodes.status]
 
     split_nodes["ribasim_type"] = "TabulatedRatingCurve" 
     split_nodes_conversion = {
@@ -637,22 +709,29 @@ def generate_ribasim_types_for_all_split_nodes(
             if len(split_nodes[split_nodes["split_node_id"] == key]) == 0:
                 print(f"   * split_node type conversion id={key} (type={value}) does not exist")
             split_nodes.loc[split_nodes["split_node_id"] == key, "ribasim_type"] = value
+
+    # add removed split nodes back into gdf
+    if removed_split_nodes is not None:
+        split_nodes = pd.concat([split_nodes, removed_split_nodes], axis=0)
     return boundaries, split_nodes, basins
 
 
 def generate_ribasim_network_using_split_nodes(
-    nodes: gpd.GeoDataFrame,
-    edges: gpd.GeoDataFrame,
-    split_nodes: gpd.GeoDataFrame,
-    areas: gpd.GeoDataFrame,
-    boundaries: gpd.GeoDataFrame,
-    split_node_type_conversion: Dict, 
-    split_node_id_conversion: Dict,
-    crs: int = 28992,
-) -> Dict:
-    """create basins (nodes) and basin_areas (large polygons) and connections (edges)
+        nodes: gpd.GeoDataFrame,
+        edges: gpd.GeoDataFrame,
+        split_nodes: gpd.GeoDataFrame,
+        areas: gpd.GeoDataFrame,
+        boundaries: gpd.GeoDataFrame,
+        split_node_type_conversion: Dict, 
+        split_node_id_conversion: Dict,
+        crs: int = 28992,
+    ) -> Dict:
+    """
+    create basins (nodes) and basin_areas (large polygons) and connections (edges)
     based on nodes, edges, split_nodes and areas (discharge units).
-    This function calls all other functions"""
+    This function calls all other functions
+    """
+
     print("Create Ribasim network using Network and Split nodes:")
     network_graph = None
     basin_areas = None
@@ -661,7 +740,7 @@ def generate_ribasim_network_using_split_nodes(
         nodes=nodes,
         edges=edges
     )
-    network_graph = split_graph_based_on_split_nodes(
+    network_graph, split_nodes = split_graph_based_on_split_nodes(
         graph=network_graph, 
         split_nodes=split_nodes,
         edges=edges

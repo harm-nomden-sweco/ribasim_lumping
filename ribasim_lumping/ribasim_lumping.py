@@ -217,7 +217,7 @@ class RibasimLumpingNetwork(BaseModel):
             # reset indexes of gdfs, rename some columns and do some automatic corrections
             for gdf in [self.split_nodes, self.edges_gdf, self.nodes_gdf, self.boundaries_gdf]:
                 gdf.reset_index(drop=True, inplace=True)
-                gdf.rename(columns={'split_type': 'object_type', 'Type': 'quantity', 'boundary_id': 'boundary'}, inplace=True)
+                gdf.rename(columns={'split_type': 'object_type', 'Type': 'quantity', 'boundary_id': 'boundary', 'branch_id': 'code'}, inplace=True)
             if 'split_node' not in self.split_nodes.columns:
                 self.split_nodes['split_node'] = self.split_nodes.index
             if 'quantity' in self.boundaries_gdf.columns:
@@ -388,7 +388,6 @@ class RibasimLumpingNetwork(BaseModel):
             crs=crs,
             remove_z_dim=True    
         )
-
 
     def set_split_nodes(self, split_nodes_gdf: gpd.GeoDataFrame):
         """

@@ -319,7 +319,14 @@ def snap_to_network(
 
     if snap_type == "split_node":
         print(f"Snapping split nodes to nodes or edges within buffer distance ({buffer_distance:.3f} m)...")
-        points = snap_points_to_nodes_and_edges(points, edges=edges, nodes=nodes, buffer_distance=buffer_distance)
+        points = snap_points_to_nodes_and_edges(
+            points, 
+            edges=edges, 
+            nodes=nodes, 
+            edges_bufdist=buffer_distance,
+            nodes_bufdist=buffer_distance * 0.1,
+            n_edges_to_node_limit=3,
+        )
         # print out all non-snapped split nodes
         if any([(n == -1) and (e == -1) for n, e in zip(points['node_no'], points['edge_no'])]):
             print(f"The following split nodes could not be snapped to nodes or edges within buffer distance ({buffer_distance:.3f} m):")
@@ -329,7 +336,12 @@ def snap_to_network(
         return points
     elif snap_type == "boundary":
         print(f"Snapping boundaries to nodes within buffer distance ({buffer_distance:.3f} m)...")
-        points = snap_points_to_nodes_and_edges(points, edges=None, nodes=nodes, buffer_distance=buffer_distance)  # exclude edges on purpose
+        points = snap_points_to_nodes_and_edges(
+            points, 
+            edges=None,   # exclude edges on purpose
+            nodes=nodes, 
+            nodes_bufdist=buffer_distance,
+        )
         # print out all non-snapped boundaries
         if any([(n == -1) for n in points['node_no']]):
             print(f"The following boundaries could not be snapped to nodes within buffer distance ({buffer_distance:.3f} m):")
@@ -345,7 +357,9 @@ def snap_points_to_nodes_and_edges(
         points: gpd.GeoDataFrame, 
         edges: gpd.GeoDataFrame = None,
         nodes: gpd.GeoDataFrame = None,
-        buffer_distance: float = 0.5
+        edges_bufdist: float = 0.5,
+        nodes_bufdist: float = 0.5,
+        n_edges_to_node_limit: int = 1e10,
     ) -> gpd.GeoDataFrame:
     """
     Snap point geometries to network based on type and within buffer distance
@@ -359,36 +373,66 @@ def snap_points_to_nodes_and_edges(
         too, this snapping will first try to snap to nodes and if not possible, to edges.
     nodes : gpd.GeoDataFrame
         Point feature dataset containing nodes. Use None to don't snap point to nodes
-    buffer_distance: float
-        Buffer distance (in meter) that is used to snap split nodes to start/end nodes or edges
+    edges_bufdist : float
+        Buffer distance (in meter) that is used to snap point to edges
+    nodes_bufdist : float
+        Buffer distance (in meter) that is used to snap points to nodes
+    n_edges_to_node_limit : int
+        Limit the snapping to node by the number of edges that is connected to that node. There is no 
+        snapping to node if number of connected edges to node is greater or equal than this value 
+        (no snapping if n_connected_edges >= n_edges_to_node_limit). In order to use this option
+        both nodes and edges need to be supplied.
 
     Returns
     -------
-    GeoDataFrame with split nodes that are either snapped or not (based on edge_no or node_no column value)
+    GeoDataFrame with snapped points (whether or not it's snapped can be derived from edge_no or node_no column value)
     """
 
-    print(f"Snapping points to edges within buffer distance ({buffer_distance:.3f} m)...")
+    print(f"Snapping points to nodes and/or edges")
     new_points = points.geometry.tolist()
     for i, point in enumerate(points.geometry):
         if nodes is not None:
+            check = False
             # check if point is within buffer distance of node(s)
-            start_end_nodes = nodes.geometry.values[nodes.intersects(point.buffer(buffer_distance))]
-            if len(start_end_nodes) >= 1:
-                _dist_n_to_nodes = np.array([n.distance(point) for n in start_end_nodes])
-                new_points[i] = start_end_nodes[np.argmin(_dist_n_to_nodes)]
-                continue  # continue to next point
-            else:
-                pass  # no snapping to node could be achieved. try next with edges if supplied.
+            ix = nodes.index.values[nodes.intersects(point.buffer(nodes_bufdist))]
+            if len(nodes.loc[ix]) >= 1:
+                _dist_n_to_nodes = np.array([n.distance(point) 
+                                             for n in nodes.loc[ix].geometry.values])
+                _ix = ix[np.argmin(_dist_n_to_nodes)]
+                new_point = nodes.loc[_ix, 'geometry']
+                node_no = nodes.loc[_ix, 'node_no']
+                if edges is not None:
+                    # first try with know edge/node info for speed-up, otherwise find the connected edges
+                    if 'node_no' in edges.columns:
+                        _edges = edges.loc[node_no == 'node_no']
+                    else:
+                        _edges = edges.loc[new_point.buffer(0.000001).intersects(edges.geometry.values)]
+                    # if connected edges less than limit, snap to node
+                    if len(_edges) < n_edges_to_node_limit:
+                        check = True
+                    else:
+                        print(f"  DEBUG - Point with index {points.index.values[i]} can be snapped to node no {node_no} "
+                              f"but number of connected edges to node ({len(_edges)}) is equal or higher than limit "
+                              f"({n_edges_to_node_limit}). Don't snap to node and try to snap to edge. Please inspect manually")
+            # if check is True, a valid node for point to snap to has been found
+            if check:
+                new_points[i] = new_point
+                continue  # no need to check snapping to edge in this case
         if edges is not None:
             # if no edge is within point combined with buffer distance, skip
-            lines = edges.geometry.values[edges.geometry.intersects(point.buffer(buffer_distance))]
+            lines = edges.geometry.values[edges.geometry.intersects(point.buffer(edges_bufdist))]
+            # also skip if line is shorter than 2 m
+            lines = lines[[l.length > 2 for l in lines]]
             if len(lines) == 0:
                 continue
-            # project node onto edge within buffer distance
-            _nodes = np.array([l.interpolate(l.project(point)) for l in lines], dtype=object)
+            # project node onto edge but make sure resulting point is some distance (0.5 meter) from start/end node of edge
+            _dist_along_line = [l.project(point) for l in lines]
+            _dist_along_line = [((l.length - 0.5) if (d > (l.length - 0.5)) else d) if (d > 0.5) else 0.5 
+                                for l, d in zip(lines, _dist_along_line)]
+            _nodes = np.array([l.interpolate(d) for l, d in zip(lines, _dist_along_line)], dtype=object)
             _dist_n_to_nodes = np.array([n.distance(point) for n in _nodes])
             # filter out nodes that is within buffer distance and use one with minimum distance
-            ix = np.where(_dist_n_to_nodes <= buffer_distance)[0]
+            ix = np.where(_dist_n_to_nodes <= edges_bufdist)[0]
             if len(ix) >= 1:
                 # select snapped node that is closest to edge
                 _nodes, _dist_n_to_nodes = _nodes[ix], _dist_n_to_nodes[ix]
@@ -537,13 +581,13 @@ def split_edges_by_split_nodes(
             edges = pd.concat([edges, edges_to_add], axis=0)
             edges.drop(index=edges_orig.index.values[i], inplace=True)
 
-    # update branch id column if present
-    if 'branch_id' in edges.columns:
-        n_max = np.max(np.unique(edges['branch_id'], return_counts=True)[1])  # max group size in groupby
+    # update edge id column if present
+    if 'edge_id' in edges.columns:
+        n_max = np.max(np.unique(edges['edge_id'], return_counts=True)[1])  # max group size in groupby
         split_nrs = np.arange(start=1, stop=n_max+1)
-        split_nrs = edges.groupby('branch_id')['from_node'].transform(lambda x: split_nrs[:len(x)])
-        max_splits = edges.groupby('branch_id')['from_node'].transform(lambda x: len(x))
-        edges['branch_id'] = [f'{b}_{s}' if m > 1 else b for b, s, m in zip(edges['branch_id'], split_nrs, max_splits)]
+        split_nrs = edges.groupby('edge_id')['from_node'].transform(lambda x: split_nrs[:len(x)])
+        max_splits = edges.groupby('edge_id')['from_node'].transform(lambda x: len(x))
+        edges['edge_id'] = [f'{b}_{s}' if m > 1 else b for b, s, m in zip(edges['edge_id'], split_nrs, max_splits)]
     # regenerate start/end nodes of edges
     edges['edge_no'] = range(len(edges))  # reset edge no
     edges, nodes = generate_nodes_from_edges(edges)
