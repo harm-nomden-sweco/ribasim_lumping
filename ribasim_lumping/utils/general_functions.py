@@ -254,6 +254,33 @@ def read_geom_file(
     return gdf
 
 
+def log_and_remove_duplicate_geoms(gdf: gpd.GeoDataFrame, colname: str = None) -> gpd.GeoDataFrame:
+    """
+    Log and remove duplicate geometries from GeoDataFrame
+
+    Parameters
+    ----------
+    filepath : Path
+        GeoDataFrame containing geometries
+    colname : str
+        Column name to use for logging. Default to None which will use 1st column in gdf
+
+    Returns
+    -------
+    GeoDataFrame
+    """
+    gdf = gdf.copy()
+    colname = colname if colname is not None else list(gdf.columns)[0]
+    tmp = gdf.loc[gdf.duplicated('geometry', keep=False)]
+    gdf = gdf.loc[~gdf.duplicated('geometry')]
+    if not tmp.empty:
+        for i, row in gdf.iterrows():
+            tmp2 = tmp.loc[tmp.geometry.values == row.geometry]
+            if not tmp2.empty:
+                print(f"  Duplicate geometries found for {colname}: {tmp2[colname].to_list()}. Keeping first entry: {row[colname]}")
+    return gdf
+
+
 def generate_nodes_from_edges(
         edges: gpd.GeoDataFrame
     ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:

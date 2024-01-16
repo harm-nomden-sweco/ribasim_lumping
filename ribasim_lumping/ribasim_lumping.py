@@ -17,7 +17,8 @@ from shapely.geometry import Point
 from .utils.general_functions import (
     read_geom_file, 
     snap_to_network, 
-    split_edges_by_split_nodes
+    split_edges_by_split_nodes,
+    log_and_remove_duplicate_geoms
 )
 from .dhydro.read_dhydro_simulations import add_dhydro_basis_network, add_dhydro_simulation_data
 from .hydamo.read_hydamo_network import add_hydamo_basis_network
@@ -322,6 +323,7 @@ class RibasimLumpingNetwork(BaseModel):
             crs=crs,
             remove_z_dim=True
         )
+        self.boundaries_gdf = log_and_remove_duplicate_geoms(self.boundaries_gdf, colname='boundary_id')
 
     def add_split_nodes(
         self,
@@ -388,6 +390,7 @@ class RibasimLumpingNetwork(BaseModel):
             crs=crs,
             remove_z_dim=True    
         )
+        self.split_nodes = log_and_remove_duplicate_geoms(self.split_nodes, colname='split_node')
 
     def set_split_nodes(self, split_nodes_gdf: gpd.GeoDataFrame):
         """
