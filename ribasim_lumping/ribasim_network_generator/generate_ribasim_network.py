@@ -589,6 +589,9 @@ def regenerate_node_ids(
     Regenerate ribasim node-id for nodes and edges
     """
 
+    boundaries, split_nodes, basins, basin_connections = boundaries.copy(), split_nodes.copy(), basins.copy(), basin_connections.copy()
+    boundary_connections, basin_areas, nodes, edges = boundary_connections.copy(), basin_areas.copy(), nodes.copy(), edges.copy()
+
     print(f" - regenerate node-ids Ribasim-Nodes and Ribasim-Edges")
     # boundaries
     if boundaries is not None:
@@ -663,6 +666,15 @@ def regenerate_node_ids(
         left_on="split_node_node_id", 
         right_index=True
     ), geometry="geometry", crs=split_nodes.crs)
+
+    # the above actions can result in duplicate entries in tables. only keep one records of those duplicates
+    boundaries = boundaries.loc[~boundaries.duplicated()].copy()
+    split_nodes = split_nodes.loc[~split_nodes.duplicated()].copy()
+    basins = basins.loc[~basins.duplicated()].copy()
+    basin_areas = basin_areas.loc[~basin_areas.duplicated()].copy()
+    nodes = nodes.loc[~nodes.duplicated()].copy()
+    edges = edges.loc[~edges.duplicated()].copy()
+
     return boundaries, split_nodes, basins, basin_areas, nodes, edges
 
 
