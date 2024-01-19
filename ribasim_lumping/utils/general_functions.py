@@ -247,7 +247,7 @@ def read_geom_file(
     else:
         gdf = gpd.read_file(filepath, crs=crs)
     if explode_geoms:
-        gdf = gdf.explode()  # explode to transform multi-part geoms to single
+        gdf = gdf.explode(ignore_index=True)  # explode to transform multi-part geoms to single
     if remove_z_dim:
         gdf.geometry = [Point(g.coords[0][:2]) if isinstance(g, Point) else LineString([c[:2] for c in g.coords])
                         for g in gdf.geometry.values]  # remove possible Z dimension
