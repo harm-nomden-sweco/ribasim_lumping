@@ -438,7 +438,11 @@ def snap_points_to_nodes_and_edges(
                     if len(_edges) < n_edges_to_node_limit:
                         check = True
                     else:
-                        print(f"  DEBUG - Point with index {points.index.values[i]} can be snapped to node no {node_no} "
+                        if 'split_node' in points.columns:
+                            point_label = f"Split node {points['split_node'].values[i]}"
+                        else:
+                            point_label = f"Point with index {points.index.values[i]}"
+                        print(f"  DEBUG - {point_label} can be snapped to node no {node_no} "
                               f"but number of connected edges to node ({len(_edges)}) is equal or higher than limit "
                               f"({n_edges_to_node_limit}). Don't snap to node and try to snap to edge. Please inspect manually")
                 else:
