@@ -4,6 +4,15 @@ import numpy as np
 
 
 def generate_basin_static_table(basin_h, basin_a, basins, decimals=3):
+    if basin_h is None:
+        return pd.DataFrame(
+            data={
+                "node_id": np.repeat(basins.basin_node_id.values, 2), 
+                "level": [0.0, 1.0]*len(basins), 
+                "area": [1000.0, 1000.0]*len(basins)
+            }
+        )
+        
     basin_profile = pd.DataFrame(
         columns=['node_id', 'level', 'area', 'remarks']
     )
@@ -36,6 +45,7 @@ def generate_basin_time_table_laterals(basins, basin_areas, laterals, laterals_d
     for basin_no in basins["basin_node_id"].to_numpy():
         if basin_no in basin_areas["basin_node_id"].to_numpy():
             laterals_basin = laterals_basins[laterals_basins["basin_node_id"]==basin_no]["id"].to_numpy()
+            laterals_basin = [l for l in laterals_basin if l in laterals_data.columns]
             timeseries_basin = laterals_data[laterals_basin].sum(axis=1)
             timeseries_basin.name = "drainage"
             timeseries_basin = timeseries_basin.to_frame()
@@ -51,6 +61,31 @@ def generate_basin_time_table_laterals(basins, basin_areas, laterals, laterals_d
         timeseries_basin["urban_runoff"] = 0.0
         timeseries_basin["node_id"] = basin_no
         
+        timeseries = pd.concat([
+            timeseries,
+            timeseries_basin
+        ])
+    timeseries = timeseries.sort_values(["time", "node_id"]).reset_index(drop=True)
+    timeseries = timeseries[["time", "node_id", "precipitation", "potential_evaporation", "drainage", "infiltration", "urban_runoff"]]
+    return timeseries
+
+def generate_basin_time_table_areas_laterals_data(basins, areas, areas_laterals_data):
+    timeseries = pd.DataFrame()
+    for basin_no in basins["basin_node_id"].values:
+        areas_basin = list(areas[areas['basin_node_id'] == basin_no]['area_code'].unique())
+        timeseries_basin = areas_laterals_data[areas_basin].sum(axis=1).to_frame().rename(columns={0: 'Netto_flux'}).reset_index()
+        
+        timeseries_basin["drainage"] = timeseries_basin["Netto_flux"][timeseries_basin["Netto_flux"]>0]
+        timeseries_basin["drainage"] = timeseries_basin["drainage"].fillna(0.0)
+
+        timeseries_basin["infiltration"] = timeseries_basin["Netto_flux"][timeseries_basin["Netto_flux"]<0]
+        timeseries_basin["infiltration"] = timeseries_basin["infiltration"].fillna(0.0)
+        
+        timeseries_basin["potential_evaporation"] = 0.0
+        timeseries_basin["precipitation"] = 0.0
+        timeseries_basin["urban_runoff"] = 0.0
+        timeseries_basin["node_id"] = basin_no
+
         timeseries = pd.concat([
             timeseries,
             timeseries_basin
@@ -143,16 +178,31 @@ def generate_tabulate_rating_curve(basins_outflows, tabulated_rating_curves, bas
     return curves.drop_duplicates().reset_index(drop=True)
 
 
-def generate_ribasim_model_tables(basin_h, basin_a, basins, basin_areas, 
+def generate_manning_resistances(manningresistance):
+    return pd.DataFrame(
+        data={
+            "node_id": manningresistance["split_node_node_id"],
+            "length": [750.0]*len(manningresistance),
+            "manning_n": [0.04]*len(manningresistance),
+            "profile_width": [5.0]*len(manningresistance),
+            "profile_slope": [3.0]*len(manningresistance),
+        }
+    )
+
+
+def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_areas, areas,
     laterals, laterals_data, boundaries, boundaries_data, 
-    split_nodes, basins_outflows, set_name, basin_h_initial, use_basis_network_laterals, saveat, drainage_per_ha,
+    split_nodes, basins_outflows, set_name, basin_h_initial, 
+    use_laterals_basis_network, use_laterals_areas, areas_laterals_data, saveat, drainage_per_ha,
     edge_q_df, weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df):
 
     # create tables for BASINS
     tables = dict()
     tables['basin_profile'] = generate_basin_static_table(basin_h, basin_a, basins, decimals=3)
 
-    if use_basis_network_laterals:
+    print('laterals')
+    if use_laterals_basis_network and laterals is not None and laterals_data is not None:
+        print(' - laterals based on lateral inflow according to dhydro network')
         tables['basin_time'] = generate_basin_time_table_laterals(
             basins, 
             basin_areas, 
@@ -160,7 +210,15 @@ def generate_ribasim_model_tables(basin_h, basin_a, basins, basin_areas,
             laterals_data,
             saveat
         )
+    elif use_laterals_areas and areas_laterals_data is not None:
+        print(' - laterals based on lateral inflow (timeseries) per area')
+        tables['basin_time'] = generate_basin_time_table_areas_laterals_data(
+            basins, 
+            areas, 
+            areas_laterals_data
+        )
     else:
+        print(' - laterals based on homogeneous lateral inflow timeseries')
         tables['basin_time'] = generate_basin_time_table_drainage_per_ha(
             basins, 
             basin_areas, 
@@ -219,14 +277,6 @@ def generate_ribasim_model_tables(basin_h, basin_a, basins, basin_areas,
     
     # create tables for MANNINGRESISTANCE
     manningresistance = split_nodes[split_nodes['ribasim_type'] == 'ManningResistance']
-    tables['manningresistance_static'] = pd.DataFrame(
-        data={
-            "node_id": manningresistance["split_node_node_id"],
-            "length": [750.0]*len(manningresistance),
-            "manning_n": [0.04]*len(manningresistance),
-            "profile_width": [5.0]*len(manningresistance),
-            "profile_slope": [3.0]*len(manningresistance),
-        }
-    )
+    tables['manningresistance_static'] = generate_manning_resistances(manningresistance)
 
     return tables

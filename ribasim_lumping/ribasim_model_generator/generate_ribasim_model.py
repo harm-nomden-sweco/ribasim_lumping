@@ -3,6 +3,7 @@ import pandas as pd
 from typing import List, Union, Optional, Any, Tuple, Dict
 import ribasim
 from typing import Dict
+from pathlib import Path
 from shapely.geometry import LineString
 
 
@@ -12,22 +13,24 @@ def generate_ribasim_nodes_static(
     basins: gpd.GeoDataFrame, 
 ):
     """Generate Ribasim Nodes"""
-    print("nodes ", end="", flush=True)
     # Ribasim Nodes Static
+    nodes = pd.concat([
+        boundaries.rename(columns={"boundary_node_id": "node_id"}), 
+        split_nodes.rename(columns={"split_node_node_id": "node_id", "split_node_id": "name"}),
+        basins.rename(columns={"basin_node_id": "node_id"}),
+    ])
+
+    print(f"nodes ({len(nodes)}x), ", end="", flush=True)
     ribasim_nodes_static = gpd.GeoDataFrame(
-        data=pd.concat([
-            boundaries.rename(columns={"boundary_node_id": "node_id"}), 
-            split_nodes.rename(columns={"split_node_node_id": "node_id", "split_node_id": "name"}),
-            basins.rename(columns={"basin_node_id": "node_id"}),
-        ]),
+        data=nodes,
         geometry='geometry',
         crs=split_nodes.crs
     )
     ribasim_nodes_static = ribasim_nodes_static.set_index("node_id")
-    ribasim_nodes_static = ribasim_nodes_static[["geometry", "ribasim_type", "name"]]
+    ribasim_nodes_static = ribasim_nodes_static[["ribasim_type", "name", "geometry"]]
     ribasim_nodes_static = ribasim_nodes_static.rename(columns={"ribasim_type": "type"})
     if ~ribasim_nodes_static.empty:
-        ribasim_nodes = ribasim.Node(static=ribasim_nodes_static)
+        ribasim_nodes = ribasim.Node(df=ribasim_nodes_static)
     else:
         ribasim_nodes = None
     
@@ -39,13 +42,14 @@ def generate_ribasim_edges(
     boundary_connections: gpd.GeoDataFrame
 ):
     """generate ribasim edges between nodes, using basin connections and boundary-basin connections"""
-    print("edges ", end="", flush=True)
     edges = pd.concat([
         basin_connections[["from_node_id", "to_node_id", "geometry"]], 
         boundary_connections[["from_node_id", "to_node_id", "geometry"]], 
     ], ignore_index=True)
-    edges["edge_type"] = "flow"
 
+    print(f"edges ({len(edges)}x), ", end="", flush=True)
+
+    edges["edge_type"] = "flow"
     ribasim_edges_static = gpd.GeoDataFrame(
         data=edges,
         geometry='geometry',
@@ -54,7 +58,7 @@ def generate_ribasim_edges(
     if ribasim_edges_static.empty:
         ribasim_edges = None
     else:
-        ribasim_edges = ribasim.Edge(static=ribasim_edges_static)
+        ribasim_edges = ribasim.Edge(df=ribasim_edges_static)
     return ribasim_edges
 
 
@@ -67,21 +71,20 @@ def generate_ribasim_basins(
     static: node_id, drainage, potential_evaporation, infiltration, precipitation, urban_runoff
     profile: node_id, level, area, storage
     """
-    print("basins ", end="", flush=True)
     if basin_profile.empty or basin_time.empty:
-        print("   x no basins")
-        return None
-
+        print(f"basins (--)", end="", flush=True)
+        return ribasim.Basin()
+    print(f"basins ({len(basin_state)}x)", end="", flush=True)
     return ribasim.Basin(profile=basin_profile, time=basin_time, state=basin_state)
 
 
 def generate_ribasim_level_boundaries(level_boundary_static: gpd.GeoDataFrame):
     """generate ribasim level boundaries for all level boundary nodes
     static: node_id, level"""
-    print("boundaries ", end="", flush=True)
     if level_boundary_static is None or level_boundary_static.empty:
-        print("   x no level boundaries")
-        return None
+        print(f"boundaries (--", end="", flush=True)
+        return ribasim.LevelBoundary()
+    print(f"boundaries ({len(level_boundary_static)}x)", end="", flush=True)
     return ribasim.LevelBoundary(static=level_boundary_static)
 
 
@@ -90,8 +93,9 @@ def generate_ribasim_flow_boundaries(flow_boundary_static: gpd.GeoDataFrame):
     static: node_id, flow_rate"""
     print("flow_boundaries ", end="", flush=True)
     if flow_boundary_static is None or flow_boundary_static.empty:
-        return None
-    return ribasim.LevelBoundary(static=flow_boundary_static)
+        print("   x no flow boundaries")
+        return ribasim.FlowBoundary()
+    return ribasim.FlowBoundary(static=flow_boundary_static)
 
 
 def generate_ribasim_pumps(pump_static: gpd.GeoDataFrame):
@@ -99,7 +103,8 @@ def generate_ribasim_pumps(pump_static: gpd.GeoDataFrame):
     static: node_id, flow_rate""" 
     print("pumps ", end="", flush=True)
     if pump_static is None or pump_static.empty:
-        return None
+        print("   x no pumps")
+        return ribasim.Pump()
     return ribasim.Pump(static=pump_static)
 
 
@@ -108,7 +113,8 @@ def generate_ribasim_outlets(outlet_static: gpd.GeoDataFrame):
     static: node_id, flow_rate"""
     print("outlets ", end="", flush=True)
     if outlet_static is None or outlet_static.empty:
-        return None
+        print("   x no outlets", end="", flush=True)
+        return ribasim.Outlet()
     return ribasim.Outlet(static=outlet_static)
 
 
@@ -119,7 +125,8 @@ def generate_ribasim_tabulatedratingcurves(
     static: node_id, level, discharge"""
     print("tabulatedratingcurve ", end="", flush=True)
     if tabulated_rating_curve_static is None or tabulated_rating_curve_static.empty:
-        return None
+        print("   x no tabulated rating curve")
+        return ribasim.TabulatedRatingCurve()
     return ribasim.TabulatedRatingCurve(static=tabulated_rating_curve_static)
 
 
@@ -128,18 +135,57 @@ def generate_ribasim_manningresistances(manningresistance_static: gpd.GeoDataFra
     static: node_id, length, manning_n, profile_width, profile_slope"""
     print("manningresistances ", end="", flush=True)
     if manningresistance_static is None or manningresistance_static.empty:
-        return None
+        print("   x no manningresistance")
+        return ribasim.ManningResistance()
     return ribasim.ManningResistance(static=manningresistance_static)
     
 
+def generate_fractional_flows():
+    return ribasim.FractionalFlow()
+
+
+def generate_linear_resistances():
+    return ribasim.LinearResistance()
+
+
+def generate_terminals():
+    return ribasim.Terminal()
+
+
+def generate_discrete_controls():
+    return ribasim.DiscreteControl()
+
+
+def generate_pid_controls():
+    return ribasim.PidControl()
+
+
+def generate_users():
+    return ribasim.User()
+
+
+def generate_allocations():
+    return ribasim.Allocation()
+
+
+def generate_solvers():
+    return ribasim.Solver()
+
+
+def generate_loggings():
+    return ribasim.Logging()
+
+
 def generate_ribasim_model(
-    simulation_code: str = "ribasim_model",
+    simulation_filepath: Path,
     basins: gpd.GeoDataFrame = None, 
     split_nodes: gpd.GeoDataFrame = None, 
     boundaries: gpd.GeoDataFrame = None, 
     basin_connections: gpd.GeoDataFrame = None, 
     boundary_connections: gpd.GeoDataFrame = None, 
     tables: Dict = None,
+    database_gpkg: str = 'database.gpkg',
+    results_dir: str = '.'
 ):
     """generate ribasim model from ribasim nodes and edges and
     optional input; ribasim basins, level boundary, flow_boundary, pump, tabulated rating curve and manning resistance """
@@ -187,14 +233,36 @@ def generate_ribasim_model(
         manningresistance_static=tables['manningresistance_static'], 
     )
 
+    fractions_flows = generate_fractional_flows()
+
+    linear_resistances = generate_linear_resistances()
+
+    terminals = generate_terminals()
+
+    discrete_controls = generate_discrete_controls()
+
+    pid_controls = generate_pid_controls()
+
+    users = generate_users()
+
+    allocations = generate_allocations()
+
+    solvers = generate_solvers()
+
+    loggings = generate_loggings()
+
     starttime = tables['basin_time']["time"].iloc[0].strftime("%Y-%m-%d %H:%M")
     endtime = tables['basin_time']["time"].iloc[-1].strftime("%Y-%m-%d %H:%M")
 
     print("")
-    ribasim_model = ribasim.Model(
-        modelname=simulation_code,
+    network = ribasim.Network(
         node=ribasim_nodes,
         edge=ribasim_edges,
+        filepath=simulation_filepath
+    )
+    ribasim_model = ribasim.Model(
+        # modelname=simulation_code,
+        network=network,
         basin=ribasim_basins,
         level_boundary=ribasim_level_boundaries,
         flow_boundary=ribasim_flow_boundaries,
@@ -202,7 +270,21 @@ def generate_ribasim_model(
         outlet=ribasim_outlets,
         tabulated_rating_curve=ribasim_tabulated_rating_curve,
         manning_resistance=ribasim_manning_resistance,
+        fractional_flow=fractions_flows,
+        linear_resistance=linear_resistances,
+        terminal=terminals,
+        discrete_control=discrete_controls,
+        pid_control=pid_controls,
+        user=users,
+        allocation=allocations,
+        solver=solvers,
+        logging=loggings,
         starttime=starttime,
         endtime=endtime,
     )
+
+    # add database name and results folder
+    ribasim_model.database = database_gpkg
+    ribasim_model.results_dir = results_dir
     return ribasim_model
+
