@@ -45,38 +45,31 @@ def add_hydamo_basis_network(
     hydamo_file = Path(hydamo_basis_dir,"hydamo.gpkg")
     print(f'read data {hydamo_file}')
 
-    stuw_gdf = read_hydamo_gpkg(hydamo_file, layername= 'stuw')  
-    duikersifonhevel_gdf = read_hydamo_gpkg(hydamo_file, layername= 'duikersifonhevel')
-    gemaal_gdf = read_hydamo_gpkg(hydamo_file, layername= 'gemaal')
-    peilgebiedvigerend_gdf = read_hydamo_gpkg(hydamo_file, layername= 'peilgebiedvigerend')
-    peilgebiedpraktijk_gdf = read_hydamo_gpkg(hydamo_file, layername= 'peilgebiedpraktijk')
-    afvoergebiedaanvoergebied_gdf = read_hydamo_gpkg(hydamo_file, layername= 'afvoergebiedaanvoergebied')
-    afsluiter_gdf = read_hydamo_gpkg(hydamo_file, layername= 'afsluiter')
-    sluis_gdf = read_hydamo_gpkg(hydamo_file, layername= 'sluis')
     hydroobject_gdf = read_hydamo_gpkg(hydamo_file, layername= 'hydroobject')
 
-    pumps_gdf = read_hydamo_gpkg(hydamo_file, layername= 'gemaal', object_type='pump')
-    if pumps_gdf is not None:
-        pumps_gdf['structure_id']=pumps_gdf['code']
-        pumps_gdf=pumps_gdf[['structure_id', 'geometry', 'object_type']]
     weirs_gdf = read_hydamo_gpkg(hydamo_file, layername= 'stuw', object_type='weir')
     if weirs_gdf is not None:
-        weirs_gdf['structure_id']=weirs_gdf['code']
+        weirs_gdf['structure_id'] = weirs_gdf['code']
         weirs_gdf=weirs_gdf[['structure_id', 'geometry', 'object_type']]
+    pumps_gdf = read_hydamo_gpkg(hydamo_file, layername= 'gemaal', object_type='pump')
+    if pumps_gdf is not None:
+        pumps_gdf['structure_id'] = pumps_gdf['code']
+        pumps_gdf=pumps_gdf[['structure_id', 'geometry', 'object_type']]
     culverts_gdf = read_hydamo_gpkg(hydamo_file, layername= 'duikersifonhevel', object_type='culvert')
     if culverts_gdf is not None:
-        culverts_gdf['structure_id']=culverts_gdf['code']
+        culverts_gdf['structure_id'] = culverts_gdf['code']
         culverts_gdf=culverts_gdf[['structure_id', 'geometry', 'object_type']]
     sluices_gdf = read_hydamo_gpkg(hydamo_file, layername= 'sluis', object_type='sluice')
     if sluices_gdf is not None:
-        sluices_gdf['structure_id']=sluices_gdf['code']
+        sluices_gdf['structure_id'] = sluices_gdf['code']
         sluices_gdf=sluices_gdf[['structure_id', 'geometry', 'object_type']]
+    discharge_areas_gdf = read_hydamo_gpkg(hydamo_file, layername= 'afvoergebiedaanvoergebied', object_type='discharge_area')
+    if discharge_areas_gdf is not None:
+        discharge_areas_gdf['structure_id'] = discharge_areas_gdf['code']
+        discharge_areas_gdf = discharge_areas_gdf[['structure_id', 'geometry', 'object_type']]
 
     nodes_gdf, edges_gdf = get_edges_nodes_from_hydroobject(hydroobject_gdf)
-    network_graph = create_network_from_edges_nodes(nodes=nodes_gdf, edges=edges_gdf)
     
-    return stuw_gdf, duikersifonhevel_gdf, gemaal_gdf, peilgebiedvigerend_gdf, peilgebiedpraktijk_gdf,\
-        afvoergebiedaanvoergebied_gdf, afsluiter_gdf, sluis_gdf, hydroobject_gdf,\
-        weirs_gdf, pumps_gdf, culverts_gdf, sluices_gdf, \
-        nodes_gdf, edges_gdf, network_graph
+    return None, None, None, edges_gdf, nodes_gdf, None, None, weirs_gdf, None, \
+        pumps_gdf, None, None, culverts_gdf, None, None, None
 

@@ -104,7 +104,6 @@ def get_basins_outflows_including_settings(split_nodes, basin_connections, bound
     basins_outflows1 = basin_connections[
         basin_connections["connection"]=="basin_to_split_node"
     ]
-
     basins_outflows1 = (
         basins_outflows1[["basin", "split_node"]]
         .merge(basins_split_nodes, how="left", on="split_node")
@@ -113,6 +112,8 @@ def get_basins_outflows_including_settings(split_nodes, basin_connections, bound
         if gdf is None:
             basins_outflows1[gdf_columns] = np.nan
         else:
+            if "structure_id" in basins_outflows1.columns:
+                basins_outflows1 = basins_outflows1.drop(columns=["structure_id"])
             basins_outflows1 = (
                 basins_outflows1
                 .merge(gdf[gdf_columns], 
@@ -136,6 +137,9 @@ def get_basins_outflows_including_settings(split_nodes, basin_connections, bound
 
 
 def get_target_levels_nodes_using_weirs_pumps(nodes, basins_outflows, name_column="targetlevel"):
+    columns = ['basin', 'split_node', 'split_node_id', 'split_node_node_id', 'ribasim_type', name_column]
+    basins_outflows = basins_outflows[columns]
+    basins_outflows[name_column] = basins_outflows[name_column].apply(lambda x: x if isinstance(x, float) else x[0])
     basins_outflows_grouped = basins_outflows.groupby(by="basin")
     basins_outflows_crest_levels = pd.DataFrame()
     for basin in basins_outflows_grouped.groups:
@@ -256,9 +260,20 @@ def generate_surface_storage_for_basins(node_a, node_v, nodes):
 
 
 def preprocessing_ribasim_model_tables(
-    map_data, his_data, volume_data, nodes, weirs, pumps, basins, split_nodes, 
+    dummy_model, map_data, his_data, volume_data, nodes, weirs, pumps, basins, split_nodes, 
     basin_connections, boundary_connections, interpolation_lines
 ):
+    if dummy_model:
+        basins_outflows = get_basins_outflows_including_settings(
+            split_nodes=split_nodes, 
+            basin_connections=basin_connections,
+            boundary_connections=boundary_connections,
+            weirs=weirs,
+            pumps=pumps
+        )
+        return basins_outflows, None, None, None, None, None, None, None, \
+            None, None, None, None, None, None, None, None, None, None
+    
     # prepare all data
     basins_outflows = get_basins_outflows_including_settings(
         split_nodes=split_nodes, 
@@ -280,4 +295,3 @@ def preprocessing_ribasim_model_tables(
     return basins_outflows, node_h_basin, node_h_node, node_a, node_v, basin_h, basin_a, basin_v, \
         node_bedlevel, node_targetlevel, orig_bedlevel, edge_q_df, \
             weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df
-
