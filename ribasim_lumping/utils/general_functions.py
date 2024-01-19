@@ -345,7 +345,7 @@ def snap_to_network(
     """
 
     if snap_type == "split_node":
-        print(f"Snapping split nodes to nodes or edges within buffer distance ({buffer_distance:.3f} m)...")
+        print(f"Snapping split nodes within buffer distance to nodes ({buffer_distance:.3f} m) or edges ({buffer_distance * 0.1:.3f} m)...")
         points = snap_points_to_nodes_and_edges(
             points, 
             edges=edges, 
@@ -356,13 +356,13 @@ def snap_to_network(
         )
         # print out all non-snapped split nodes
         if any([(n == -1) and (e == -1) for n, e in zip(points['node_no'], points['edge_no'])]):
-            print(f"The following split nodes could not be snapped to nodes or edges within buffer distance ({buffer_distance:.3f} m):")
+            print(f"The following split nodes could not be snapped to nodes or edges within buffer distance:")
             for i, row in points.iterrows():
                 if (row['node_no'] == -1) and (row['edge_no'] == -1):
                     print(f"  Split node {row['split_node']} - split_node_id {row['split_node_id']}")
         return points
     elif snap_type == "boundary":
-        print(f"Snapping boundaries to nodes within buffer distance ({buffer_distance:.3f} m)...")
+        print(f"Snapping boundaries within buffer distance ({buffer_distance:.3f} m) to nodes...")
         points = snap_points_to_nodes_and_edges(
             points, 
             edges=None,   # exclude edges on purpose
@@ -371,7 +371,7 @@ def snap_to_network(
         )
         # print out all non-snapped boundaries
         if any([(n == -1) for n in points['node_no']]):
-            print(f"The following boundaries could not be snapped to nodes within buffer distance ({buffer_distance:.3f} m):")
+            print(f"The following boundaries could not be snapped to nodes within buffer distance:")
             for i, row in points.iterrows():
                 if row['node_no'] == -1:
                     print(f"  Boundary {row['boundary_id']} - {row['boundary_naam']}")
