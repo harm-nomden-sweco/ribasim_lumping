@@ -66,7 +66,6 @@ class RibasimLumpingNetwork(BaseModel):
     boundaries_data: pd.DataFrame = None
     laterals_gdf: gpd.GeoDataFrame = None
     laterals_data: pd.DataFrame = None
-    areas_laterals_data: pd.DataFrame = None
     simulation_code: str = None
     simulation_path: Path = None
     basin_areas_gdf: gpd.GeoDataFrame = None
@@ -93,6 +92,12 @@ class RibasimLumpingNetwork(BaseModel):
     basins_outflows: pd.DataFrame = None
     node_bedlevel: pd.DataFrame = None
     node_targetlevel: pd.DataFrame = None
+    method_laterals: int = 1
+    laterals_areas_data: pd.DataFrame = None
+    laterals_drainage_per_ha: pd.Series = None
+    method_initial_waterlevels: int = 1
+    initial_waterlevels_simulation_name: str = ""
+    initial_waterlevels_timestep: int = 0
     ribasim_model: ribasim.Model = None
     basis_source_types: List[str] = []
     basis_set_names: List[str] = []
@@ -126,7 +131,7 @@ class RibasimLumpingNetwork(BaseModel):
 
 
     def read_areas_laterals(self, areas_laterals_path: Path):
-        self.areas_laterals_data = pd.read_csv(areas_laterals_path, index_col=0, parse_dates=True)
+        self.laterals_areas_data = pd.read_csv(areas_laterals_path, index_col=0, parse_dates=True)
 
 
     def add_basis_network(
@@ -337,12 +342,6 @@ class RibasimLumpingNetwork(BaseModel):
         self, 
         set_name: str,
         dummy_model: bool = False,
-        use_laterals_basis_network: bool = True,
-        use_laterals_areas: bool = False,
-        use_laterals_homogeneous: bool = False,
-        initial_waterlevels_simulation_name: str = None,
-        initial_waterlevels_timestep: int = 0,
-        drainage_per_ha: pd.Series = None,
         saveat: int = None,
         interpolation_lines: int = 5,
         database_gpkg: str = 'database.gpkg',
@@ -390,18 +389,24 @@ class RibasimLumpingNetwork(BaseModel):
         self.node_targetlevel = node_targetlevel
         
         basin_h_initial = None
-        if initial_waterlevels_simulation_name is not None:
+        if self.method_initial_waterlevels == 1:
+            raise ValueError('method initial waterlevels = 1 not yet implemented')
+        elif self.method_initial_waterlevels == 2:
             ind_initial_h = 0
             for i_set_name, i_simulations_names, i_sim_ts in zip(self.set_names, self.simulations_names, self.simulations_ts):
                 if i_set_name != set_name:
                     ind_initial_h += len(i_sim_ts)
                 else:
                     for i_ts, ts in enumerate(i_sim_ts):
-                        if i_ts == initial_waterlevels_timestep:
+                        if i_ts == self.initial_waterlevels_timestep:
                             break
                         ind_initial_h += 1
                     break
             basin_h_initial = basin_h.loc[set_name].iloc[ind_initial_h + 2 + interpolation_lines*2]
+        elif self.method_initial_waterlevels == 3:
+            raise ValueError('method initial waterlevels = 3 not yet implemented')
+        else:
+            raise ValueError('method initial waterlevels not 1, 2 or 3')
 
         # generate ribasim model tables
         tables = generate_ribasim_model_tables(
@@ -418,12 +423,11 @@ class RibasimLumpingNetwork(BaseModel):
             split_nodes=self.split_nodes,
             basins_outflows=basins_outflows,
             set_name=set_name,
+            method_laterals=self.method_laterals,
+            laterals_areas_data=self.laterals_areas_data,
+            laterals_drainage_per_ha=self.laterals_drainage_per_ha,
             basin_h_initial=basin_h_initial,
-            use_laterals_basis_network=use_laterals_basis_network,
-            use_laterals_areas=use_laterals_areas,
-            areas_laterals_data=self.areas_laterals_data,
             saveat=saveat,
-            drainage_per_ha=drainage_per_ha,
             edge_q_df=edge_q_df, 
             weir_q_df=weir_q_df, 
             uniweir_q_df=uniweir_q_df, 

@@ -12,7 +12,7 @@ import hydrolib.core.dflowfm as hcdfm
 from .read_dhydro_network import get_dhydro_files
 
 
-def get_simulation_names_from_dir(path_dir=None) -> List[str]:
+def get_simulation_names_from_dir(path_dir) -> List[str]:
     """search directory and find all dhydro-projects (.dsproj)"""
     if not Path(path_dir).exists():
         raise ValueError("Path of simulations does not exist")

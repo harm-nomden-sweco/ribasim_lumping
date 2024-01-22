@@ -69,11 +69,11 @@ def generate_basin_time_table_laterals(basins, basin_areas, laterals, laterals_d
     timeseries = timeseries[["time", "node_id", "precipitation", "potential_evaporation", "drainage", "infiltration", "urban_runoff"]]
     return timeseries
 
-def generate_basin_time_table_areas_laterals_data(basins, areas, areas_laterals_data):
+def generate_basin_time_table_laterals_areas_data(basins, areas, laterals_areas_data):
     timeseries = pd.DataFrame()
     for basin_no in basins["basin_node_id"].values:
         areas_basin = list(areas[areas['basin_node_id'] == basin_no]['area_code'].unique())
-        timeseries_basin = areas_laterals_data[areas_basin].sum(axis=1).to_frame().rename(columns={0: 'Netto_flux'}).reset_index()
+        timeseries_basin = laterals_areas_data[areas_basin].sum(axis=1).to_frame().rename(columns={0: 'Netto_flux'}).reset_index()
         
         timeseries_basin["drainage"] = timeseries_basin["Netto_flux"][timeseries_basin["Netto_flux"]>0]
         timeseries_basin["drainage"] = timeseries_basin["drainage"].fillna(0.0)
@@ -95,10 +95,10 @@ def generate_basin_time_table_areas_laterals_data(basins, areas, areas_laterals_
     return timeseries
 
 
-def generate_basin_time_table_drainage_per_ha(basins, basin_areas, drainage_per_ha):
-    drainage_per_ha.name = "drainage"
-    drainage_per_ha = drainage_per_ha.resample("H").interpolate()
-    drainage_m3_s_ha = drainage_per_ha.to_frame() / 1000.0
+def generate_basin_time_table_laterals_drainage_per_ha(basins, basin_areas, laterals_drainage_per_ha):
+    laterals_drainage_per_ha.name = "drainage"
+    laterals_drainage_per_ha = laterals_drainage_per_ha.resample("H").interpolate()
+    drainage_m3_s_ha = laterals_drainage_per_ha.to_frame() / 1000.0
     drainage_m3_s_ha.index.name = "time"
 
     basin_areas_ha = basin_areas.set_index('basin_node_id')
@@ -191,17 +191,16 @@ def generate_manning_resistances(manningresistance):
 
 
 def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_areas, areas,
-    laterals, laterals_data, boundaries, boundaries_data, 
-    split_nodes, basins_outflows, set_name, basin_h_initial, 
-    use_laterals_basis_network, use_laterals_areas, areas_laterals_data, saveat, drainage_per_ha,
-    edge_q_df, weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df):
+    laterals, laterals_data, boundaries, boundaries_data, split_nodes, basins_outflows, 
+    set_name, method_laterals, laterals_areas_data, laterals_drainage_per_ha, basin_h_initial, 
+    saveat, edge_q_df, weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df):
 
     # create tables for BASINS
     tables = dict()
     tables['basin_profile'] = generate_basin_static_table(basin_h, basin_a, basins, decimals=3)
 
     print('laterals')
-    if use_laterals_basis_network and laterals is not None and laterals_data is not None:
+    if method_laterals == 1 and laterals is not None and laterals_data is not None:
         print(' - laterals based on lateral inflow according to dhydro network')
         tables['basin_time'] = generate_basin_time_table_laterals(
             basins, 
@@ -210,20 +209,23 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
             laterals_data,
             saveat
         )
-    elif use_laterals_areas and areas_laterals_data is not None:
+    elif method_laterals == 2 and laterals_areas_data is not None:
         print(' - laterals based on lateral inflow (timeseries) per area')
-        tables['basin_time'] = generate_basin_time_table_areas_laterals_data(
+        tables['basin_time'] = generate_basin_time_table_laterals_areas_data(
             basins, 
             areas, 
-            areas_laterals_data
+            laterals_areas_data
         )
-    else:
+    elif method_laterals == 3:
         print(' - laterals based on homogeneous lateral inflow timeseries')
-        tables['basin_time'] = generate_basin_time_table_drainage_per_ha(
+        tables['basin_time'] = generate_basin_time_table_laterals_drainage_per_ha(
             basins, 
             basin_areas, 
-            drainage_per_ha
+            laterals_drainage_per_ha
         )
+    else:
+        raise ValueError('method_laterals should be 1, 2 or 3')
+
     if basin_h_initial is None:
         tables['basin_state'] = (basin_h.loc[(set_name, "targetlevel")]
                                  .rename("level")
