@@ -1,6 +1,6 @@
-import pandas as pd
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 
 
 def generate_basin_static_table(basin_h, basin_a, basins, decimals=3):
@@ -189,9 +189,50 @@ def generate_manning_resistances(manningresistance):
         }
     )
 
+def generate_boundary_time_table_csv_data(boundaries, boundaries_csv_data, boundarytype):
+    # boundary table from csv with timeseries per boundary_node
+    timeseries = pd.DataFrame()
+    for index, boundary in boundaries.iterrows():
+        # print(boundary)
+        boundary_no = boundary["name"]
+
+        # timeseries_boundary = boundaries_csv_data[boundary_no].sum(axis=1).to_frame().rename(columns={0: 'flow'}).reset_index()
+        timeseries_boundary = boundaries_csv_data[[boundary_no]].reset_index()
+        timeseries_boundary= timeseries_boundary.rename(columns={boundary_no: boundarytype})
+        timeseries_boundary[boundarytype] = timeseries_boundary[boundarytype][timeseries_boundary[boundarytype]>0]
+        timeseries_boundary[boundarytype] = timeseries_boundary[boundarytype].fillna(0.0)
+
+        timeseries_boundary["node_id"] = boundary["boundary_node_id"]
+
+        timeseries = pd.concat([
+            timeseries,
+            timeseries_boundary
+        ])
+    timeseries = timeseries.sort_values(["time", "node_id"]).reset_index(drop=True)
+    timeseries = timeseries[["time","node_id", boundarytype]]
+    return timeseries
+
+def generate_boundary_static_data(boundaries, boundaries_static_data):
+    # test
+    dummyvalue = 999
+    boundary_data = pd.DataFrame()
+    for boundary in boundaries:
+        boundary_no = boundary["name"]
+
+        boundary_data_boundary = boundaries_static_data[boundary_no].sum(axis=1).to_frame().rename(columns={0: 'flow'}).reset_index()
+        boundary_data_boundary["flow"] = boundary_data_boundary["flow"].fillna(dummyvalue)
+        boundary_data_boundary["node_id"] = boundary_no
+
+        boundary_data = pd.concat([
+            boundary_data,
+            boundary_data_boundary
+        ])
+    boundary_data = boundary_data.sort_values(["node_id"]).reset_index(drop=True)
+    boundary_data = boundary_data[["node_id", "flow"]]
+    return boundary_data
 
 def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_areas, areas,
-    laterals, laterals_data, boundaries, boundaries_data, 
+    laterals, laterals_data, boundaries, boundaries_data, use_boundaries_csv,boundaries_csv_data,
     split_nodes, basins_outflows, set_name, basin_h_initial, 
     use_laterals_basis_network, use_laterals_areas, areas_laterals_data, saveat, drainage_per_ha,
     edge_q_df, weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df):
@@ -236,20 +277,44 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
                                  .rename(columns={"basin_node_id": "node_id"}))
 
     # create tables for BOUNDARIES
-    level_boundaries = boundaries[boundaries['ribasim_type']=="LevelBoundary"]
-    tables['level_boundary_static'] = pd.DataFrame(
-        data={
-            "node_id": level_boundaries["boundary_node_id"],
-            "level": [7.15] * len(level_boundaries),
-        }
-    )
-    flow_boundaries = boundaries[boundaries['ribasim_type']=="FlowBoundary"]
-    tables['flow_boundary_static'] = pd.DataFrame(
-        data={
-            "node_id": flow_boundaries["boundary_node_id"],
-            "flow_rate": [0.0] * len(flow_boundaries),
-        }
-    )
+    print('boundaries')
+    if use_boundaries_csv and boundaries_csv_data is not None:
+        print('- boundaries based on timeseries')
+        flow_boundaries = boundaries[boundaries['ribasim_type']=="FlowBoundary"]
+        tables['flow_boundary_time'] = generate_boundary_time_table_csv_data(
+            flow_boundaries, 
+            boundaries_csv_data,
+            boundarytype = 'flow',
+        )  
+        tables['flow_boundary_static']=None
+
+        level_boundaries = boundaries[boundaries['ribasim_type']=="LevelBoundary"]
+        tables['level_boundary_time'] = generate_boundary_time_table_csv_data(
+            level_boundaries, 
+            boundaries_csv_data,
+            boundarytype = 'level',
+        )  
+        tables['level_boundary_static']=None
+    
+    else:
+        # oud
+        level_boundaries = boundaries[boundaries['ribasim_type']=="LevelBoundary"]
+        tables['level_boundary_static'] = pd.DataFrame(
+            data={
+                "node_id": level_boundaries["boundary_node_id"],
+                "level": [7.15] * len(level_boundaries),
+            }
+        )
+        tables['level_boundary_time']=None
+
+        flow_boundaries = boundaries[boundaries['ribasim_type']=="FlowBoundary"]
+        tables['flow_boundary_static'] = pd.DataFrame(
+            data={
+                "node_id": flow_boundaries["boundary_node_id"],
+                "flow_rate": [0.0] * len(flow_boundaries),
+            }
+        )
+        tables['flow_boundary_time']=None
     
     # create tables for PUMPS
     pumps = split_nodes[split_nodes['ribasim_type'] == 'Pump']

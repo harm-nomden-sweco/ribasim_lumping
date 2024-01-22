@@ -2,19 +2,22 @@
 Read network locations from D-Hydro simulation
 Harm Nomden (Sweco)
 """
-from pathlib import Path
-import subprocess
 import configparser
-import pandas as pd
-import geopandas as gpd
 import datetime
-from shapely.geometry import Point, LineString
+import subprocess
+from pathlib import Path
+
+import geopandas as gpd
+import hydrolib.core.dflowfm as hcdfm
+import pandas as pd
 import xarray as xr
 import xugrid as xu
-import hydrolib.core.dflowfm as hcdfm
-from ..utils.general_functions import find_file_in_directory, \
-    find_directory_in_directory, find_nearest_nodes, get_points_on_linestrings_based_on_distances, \
-        replace_string_in_file, read_ini_file_with_similar_sections, find_nearest_edges_no
+from shapely.geometry import LineString, Point
+
+from ..utils.general_functions import (
+    find_directory_in_directory, find_file_in_directory, find_nearest_edges_no,
+    find_nearest_nodes, get_points_on_linestrings_based_on_distances,
+    read_ini_file_with_similar_sections, replace_string_in_file)
 
 
 def get_dhydro_files(simulation_path: Path):

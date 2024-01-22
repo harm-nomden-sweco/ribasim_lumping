@@ -1,35 +1,43 @@
 # pylint: disable=missing-function-docstring
-import sys
 import os
+import shutil
+import sys
 from contextlib import closing
 from pathlib import Path
 from sqlite3 import connect
-from typing import List, Union, Dict
-import shutil
-import matplotlib.pyplot as plt
-import matplotlib
-from pydantic import BaseModel
+from typing import Dict, List, Union
+
 import geopandas as gpd
-import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+import networkx as nx
 import numpy as np
+import pandas as pd
 import xarray as xr
 import xugrid as xu
-import networkx as nx
+from pydantic import BaseModel
 from shapely.geometry import Point
-from .utils.general_functions import find_file_in_directory
-from .dhydro.read_dhydro_network import get_dhydro_volume_based_on_basis_simulations
-from .dhydro.read_dhydro_simulations import add_dhydro_basis_network, add_dhydro_simulation_data
+
+from .dhydro.read_dhydro_network import \
+    get_dhydro_volume_based_on_basis_simulations
+from .dhydro.read_dhydro_simulations import (add_dhydro_basis_network,
+                                             add_dhydro_simulation_data)
 from .hydamo.read_hydamo_network import add_hydamo_basis_network
-from .ribasim_network_generator.generate_split_nodes import add_split_nodes_based_on_selection
-from .ribasim_network_generator.generate_ribasim_network import generate_ribasim_network_using_split_nodes
-from .ribasim_network_generator.export_load_split_nodes import (
-    write_structures_to_excel,
-    read_structures_from_excel,
-)
-from .ribasim_model_generator.generate_ribasim_model import generate_ribasim_model
-from .ribasim_model_generator.generate_ribasim_model_preprocessing import preprocessing_ribasim_model_tables
-from .ribasim_model_generator.generate_ribasim_model_tables import generate_ribasim_model_tables
+from .ribasim_model_generator.generate_ribasim_model import \
+    generate_ribasim_model
+from .ribasim_model_generator.generate_ribasim_model_preprocessing import \
+    preprocessing_ribasim_model_tables
+from .ribasim_model_generator.generate_ribasim_model_tables import \
+    generate_ribasim_model_tables
 from .ribasim_model_results.ribasim_results import read_ribasim_model_results
+from .ribasim_network_generator.export_load_split_nodes import (
+    read_structures_from_excel, write_structures_to_excel)
+from .ribasim_network_generator.generate_ribasim_network import \
+    generate_ribasim_network_using_split_nodes
+from .ribasim_network_generator.generate_split_nodes import \
+    add_split_nodes_based_on_selection
+from .utils.general_functions import find_file_in_directory
+
 sys.path.append("..\\..\\..\\ribasim\\python\\ribasim")
 import ribasim
 
@@ -64,6 +72,7 @@ class RibasimLumpingNetwork(BaseModel):
     uniweirs_gdf: gpd.GeoDataFrame = None
     boundaries_gdf: gpd.GeoDataFrame = None
     boundaries_data: pd.DataFrame = None
+    boundaries_csv_data: pd.DataFrame = None
     laterals_gdf: gpd.GeoDataFrame = None
     laterals_data: pd.DataFrame = None
     areas_laterals_data: pd.DataFrame = None
@@ -128,6 +137,10 @@ class RibasimLumpingNetwork(BaseModel):
     def read_areas_laterals(self, areas_laterals_path: Path):
         self.areas_laterals_data = pd.read_csv(areas_laterals_path, index_col=0, parse_dates=True)
 
+    def read_boundaries_csv(self, boundaries_csv_path: Path, skiprows=0):
+        boundary_csv_data = pd.read_csv(boundaries_csv_path, sep = ';', skiprows = skiprows, index_col=0, parse_dates=True)
+        boundary_csv_data = boundary_csv_data.interpolate()
+        self.boundaries_csv_data = boundary_csv_data
 
     def add_basis_network(
         self, 
@@ -340,6 +353,7 @@ class RibasimLumpingNetwork(BaseModel):
         use_laterals_basis_network: bool = True,
         use_laterals_areas: bool = False,
         use_laterals_homogeneous: bool = False,
+        use_boundaries_csv: bool = False,
         initial_waterlevels_simulation_name: str = None,
         initial_waterlevels_timestep: int = 0,
         drainage_per_ha: pd.Series = None,
@@ -415,6 +429,8 @@ class RibasimLumpingNetwork(BaseModel):
             laterals_data=self.laterals_data,
             boundaries=self.boundaries_gdf, 
             boundaries_data=self.boundaries_data,
+            use_boundaries_csv=use_boundaries_csv,
+            boundaries_csv_data=self.boundaries_csv_data,
             split_nodes=self.split_nodes,
             basins_outflows=basins_outflows,
             set_name=set_name,
