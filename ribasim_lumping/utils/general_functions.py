@@ -345,7 +345,7 @@ def snap_to_network(
     """
 
     if snap_type == "split_node":
-        print(f"Snapping split nodes within buffer distance to nodes ({buffer_distance:.3f} m) or edges ({buffer_distance * 0.1:.3f} m)...")
+        print(f"Snapping split nodes within buffer distance to nodes ({buffer_distance * 0.1:.3f} m) or edges ({buffer_distance:.3f} m)...")
         points = snap_points_to_nodes_and_edges(
             points, 
             edges=edges, 
