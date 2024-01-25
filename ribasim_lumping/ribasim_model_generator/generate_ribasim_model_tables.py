@@ -1,6 +1,6 @@
-import pandas as pd
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 
 
 def generate_basin_static_table(basin_h, basin_a, basins, decimals=3):
@@ -127,7 +127,7 @@ def generate_basin_time_table_laterals_drainage_per_ha(basins, basin_areas, late
     return timeseries
 
 
-def generate_tabulate_rating_curve(basins_outflows, tabulated_rating_curves, basin_h, \
+def generate_tabulated_rating_curve(basins_outflows, tabulated_rating_curves, basin_h, \
                                    edge_q_df, weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df):
     tabulated_rating_curves = tabulated_rating_curves.merge(
         basins_outflows.set_index("split_node")[["crestlevel", "crestwidth"]], 
@@ -165,6 +165,8 @@ def generate_tabulate_rating_curve(basins_outflows, tabulated_rating_curves, bas
         curve.iloc[3]["discharge"] = 0.0
         curve["node_id"] = trc["split_node_node_id"]
         curve = curve.interpolate().reset_index(drop=True)
+        curve.loc[curve["discharge"] < 0.0, "discharge"] = 0.0
+
         if curve.discharge.max() < 0.01:
             print(f" x basin_node_id {basin_node_id}: no discharge over split_node ({split_type}): {trc.split_node_id} in D-HYDRO simulation")
 
@@ -172,7 +174,7 @@ def generate_tabulate_rating_curve(basins_outflows, tabulated_rating_curves, bas
                 return 2.0/3.0 * max(0.0, waterlevel - crestlevel)**(3.0/2.0) * (2*9.81)**0.5 * crestwidth
 
             curve.loc[3:, "level"] = [i*0.05 + trc.crestlevel for i in range(0, len(curve)-3)]
-            curve["discharge"] = curve.apply(lambda x: weir_formula(trc.crestlevel, trc.crestwidth, x["level"]), axis=1)
+            curve["discharge"] = curve.apply(lambda x: weir_formula(trc.crestlevel, trc.crestwidth, x["level"]), axis=1).fillna(0.0)
 
         curves = pd.concat([curves, curve])
     return curves.drop_duplicates().reset_index(drop=True)
@@ -190,9 +192,54 @@ def generate_manning_resistances(manningresistance):
     )
 
 
+def generate_boundary_time_table(boundaries, boundaries_csv_data, boundarytype):
+    # boundary table from csv with timeseries per boundary_node
+    timeseries = pd.DataFrame()
+    for i_boundary, boundary in boundaries.iterrows():
+        # print(boundary)
+        boundary_no = boundary["name"]
+
+        # timeseries_boundary = boundaries_csv_data[boundary_no].sum(axis=1).to_frame().rename(columns={0: 'flow'}).reset_index()
+        timeseries_boundary = boundaries_csv_data[[boundary_no]].reset_index()
+        timeseries_boundary= timeseries_boundary.rename(columns={boundary_no: boundarytype})
+        timeseries_boundary[boundarytype] = timeseries_boundary[boundarytype][timeseries_boundary[boundarytype]>0]
+        timeseries_boundary[boundarytype] = timeseries_boundary[boundarytype].fillna(0.0)
+
+        timeseries_boundary["node_id"] = boundary["boundary_node_id"]
+
+        timeseries = pd.concat([
+            timeseries,
+            timeseries_boundary
+        ])
+    timeseries = timeseries.sort_values(["time", "node_id"]).reset_index(drop=True)
+    timeseries = timeseries[["time","node_id", boundarytype]]
+    return timeseries
+
+
+def generate_boundary_static_data(boundaries, boundaries_static_data):
+    # test
+    dummyvalue = 999
+    boundary_data = pd.DataFrame()
+    for boundary in boundaries:
+        boundary_no = boundary["name"]
+
+        boundary_data_boundary = boundaries_static_data[boundary_no].sum(axis=1).to_frame().rename(columns={0: 'flow'}).reset_index()
+        boundary_data_boundary["flow"] = boundary_data_boundary["flow"].fillna(dummyvalue)
+        boundary_data_boundary["node_id"] = boundary_no
+
+        boundary_data = pd.concat([
+            boundary_data,
+            boundary_data_boundary
+        ])
+    boundary_data = boundary_data.sort_values(["node_id"]).reset_index(drop=True)
+    boundary_data = boundary_data[["node_id", "flow"]]
+    return boundary_data
+
+
 def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_areas, areas,
-    laterals, laterals_data, boundaries, boundaries_data, split_nodes, basins_outflows, 
-    set_name, method_laterals, laterals_areas_data, laterals_drainage_per_ha, basin_h_initial, 
+    laterals, laterals_data, boundaries, boundaries_data, split_nodes, basins_outflows, set_name, 
+    method_boundaries, boundaries_timeseries_data, 
+    method_laterals, laterals_areas_data, laterals_drainage_per_ha, basin_h_initial, 
     saveat, edge_q_df, weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df):
 
     # create tables for BASINS
@@ -238,22 +285,46 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
                                  .rename(columns={"basin_node_id": "node_id"}))
 
     # create tables for BOUNDARIES
-    level_boundaries = boundaries[boundaries['ribasim_type']=="LevelBoundary"]
-    tables['level_boundary_static'] = pd.DataFrame(
-        data={
-            "node_id": level_boundaries["boundary_node_id"],
-            "level": [7.15] * len(level_boundaries),
-        }
-    )
-    flow_boundaries = boundaries[boundaries['ribasim_type']=="FlowBoundary"]
-    tables['flow_boundary_static'] = pd.DataFrame(
-        data={
-            "node_id": flow_boundaries["boundary_node_id"],
-            "flow_rate": [0.0] * len(flow_boundaries),
-        }
-    )
+    print('boundaries')
+    if method_boundaries and boundaries_timeseries_data is not None:
+        print('- boundaries based on timeseries')
+        flow_boundaries = boundaries[boundaries['ribasim_type']=="FlowBoundary"]
+        tables['flow_boundary_time'] = generate_boundary_time_table(
+            flow_boundaries, 
+            boundaries_timeseries_data,
+            boundarytype='flow_rate',
+        )  
+        tables['flow_boundary_static'] = None
+
+        level_boundaries = boundaries[boundaries['ribasim_type']=="LevelBoundary"]
+        tables['level_boundary_time'] = generate_boundary_time_table(
+            level_boundaries, 
+            boundaries_timeseries_data,
+            boundarytype='level',
+        )  
+        tables['level_boundary_static'] = None
+    else:
+        # oud
+        level_boundaries = boundaries[boundaries['ribasim_type']=="LevelBoundary"]
+        tables['level_boundary_static'] = pd.DataFrame(
+            data={
+                "node_id": level_boundaries["boundary_node_id"],
+                "level": [7.15] * len(level_boundaries),
+            }
+        )
+        tables['level_boundary_time'] = None
+
+        flow_boundaries = boundaries[boundaries['ribasim_type']=="FlowBoundary"]
+        tables['flow_boundary_static'] = pd.DataFrame(
+            data={
+                "node_id": flow_boundaries["boundary_node_id"],
+                "flow_rate": [0.0] * len(flow_boundaries),
+            }
+        )
+        tables['flow_boundary_time'] = None
     
     # create tables for PUMPS
+    print("pumps")
     pumps = split_nodes[split_nodes['ribasim_type'] == 'Pump']
     tables['pump_static'] = pd.DataFrame(
         data={
@@ -261,7 +332,9 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
             "flow_rate": [0] * len(pumps),
         }
     )
+
     # create tables for OUTLETS
+    print("outlets")
     outlets = split_nodes[split_nodes['ribasim_type'] == 'Outlet']
     tables['outlet_static'] = pd.DataFrame(
         data={
@@ -270,8 +343,9 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
         }
     )
     # create tables for TABULATED RATING CURVES
+    print("tabulated_rating_curves")
     tabulated_rating_curves = split_nodes[split_nodes['ribasim_type'] == 'TabulatedRatingCurve']
-    tables['tabulated_rating_curve_static'] = generate_tabulate_rating_curve(
+    tables['tabulated_rating_curve_static'] = generate_tabulated_rating_curve(
         basins_outflows, tabulated_rating_curves, 
         basin_h, edge_q_df, weir_q_df, uniweir_q_df, 
         orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df

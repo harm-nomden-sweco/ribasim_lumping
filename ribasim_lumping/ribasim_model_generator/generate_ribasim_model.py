@@ -1,9 +1,9 @@
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import geopandas as gpd
 import pandas as pd
-from typing import List, Union, Optional, Any, Tuple, Dict
 import ribasim
-from typing import Dict
-from pathlib import Path
 from shapely.geometry import LineString
 
 
@@ -78,21 +78,31 @@ def generate_ribasim_basins(
     return ribasim.Basin(profile=basin_profile, time=basin_time, state=basin_state)
 
 
-def generate_ribasim_level_boundaries(level_boundary_static: gpd.GeoDataFrame):
+def generate_ribasim_level_boundaries(
+        level_boundary_static: gpd.GeoDataFrame,
+        level_boundary_time: pd.DataFrame,
+):
     """generate ribasim level boundaries for all level boundary nodes
     static: node_id, level"""
-    if level_boundary_static is None or level_boundary_static.empty:
+    if level_boundary_time is not None:
+        print('level')
+        return ribasim.LevelBoundary(time=level_boundary_time)
+    elif level_boundary_static is None or level_boundary_static.empty:
         print(f"boundaries (--", end="", flush=True)
         return ribasim.LevelBoundary()
     print(f"boundaries ({len(level_boundary_static)}x)", end="", flush=True)
     return ribasim.LevelBoundary(static=level_boundary_static)
 
 
-def generate_ribasim_flow_boundaries(flow_boundary_static: gpd.GeoDataFrame):
+def generate_ribasim_flow_boundaries(
+        flow_boundary_static: gpd.GeoDataFrame, 
+        flow_boundary_time: pd.DataFrame):
     """generate ribasim flow boundaries for all flow boundary nodes
     static: node_id, flow_rate"""
     print("flow_boundaries ", end="", flush=True)
-    if flow_boundary_static is None or flow_boundary_static.empty:
+    if flow_boundary_time is not None:
+        return ribasim.FlowBoundary(time=flow_boundary_time)
+    elif flow_boundary_static is None or flow_boundary_static.empty:
         print("   x no flow boundaries")
         return ribasim.FlowBoundary()
     return ribasim.FlowBoundary(static=flow_boundary_static)
@@ -185,7 +195,7 @@ def generate_ribasim_model(
     boundary_connections: gpd.GeoDataFrame = None, 
     tables: Dict = None,
     database_gpkg: str = 'database.gpkg',
-    results_dir: str = '.'
+    results_dir: str = 'results'
 ):
     """generate ribasim model from ribasim nodes and edges and
     optional input; ribasim basins, level boundary, flow_boundary, pump, tabulated rating curve and manning resistance """
@@ -210,11 +220,14 @@ def generate_ribasim_model(
     )
 
     ribasim_level_boundaries = generate_ribasim_level_boundaries(
-        level_boundary_static=tables['level_boundary_static']
+        level_boundary_static=tables['level_boundary_static'],
+        level_boundary_time=tables['level_boundary_time']
+
     )
 
     ribasim_flow_boundaries = generate_ribasim_flow_boundaries(
-        flow_boundary_static=tables['flow_boundary_static']
+        flow_boundary_static=tables['flow_boundary_static'],
+        flow_boundary_time=tables['flow_boundary_time']
     )
 
     ribasim_pumps = generate_ribasim_pumps(

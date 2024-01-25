@@ -1,35 +1,43 @@
 # pylint: disable=missing-function-docstring
-import sys
 import os
+import shutil
+import sys
 from contextlib import closing
 from pathlib import Path
 from sqlite3 import connect
-from typing import List, Union, Dict
-import shutil
-import matplotlib.pyplot as plt
-import matplotlib
-from pydantic import BaseModel
+from typing import Dict, List, Union
+
 import geopandas as gpd
-import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+import networkx as nx
 import numpy as np
+import pandas as pd
 import xarray as xr
 import xugrid as xu
-import networkx as nx
+from pydantic import BaseModel
 from shapely.geometry import Point
-from .utils.general_functions import find_file_in_directory
-from .dhydro.read_dhydro_network import get_dhydro_volume_based_on_basis_simulations
-from .dhydro.read_dhydro_simulations import add_dhydro_basis_network, add_dhydro_simulation_data
+
+from .dhydro.read_dhydro_network import \
+    get_dhydro_volume_based_on_basis_simulations
+from .dhydro.read_dhydro_simulations import (add_dhydro_basis_network,
+                                             add_dhydro_simulation_data)
 from .hydamo.read_hydamo_network import add_hydamo_basis_network
-from .ribasim_network_generator.generate_split_nodes import add_split_nodes_based_on_selection
-from .ribasim_network_generator.generate_ribasim_network import generate_ribasim_network_using_split_nodes
-from .ribasim_network_generator.export_load_split_nodes import (
-    write_structures_to_excel,
-    read_structures_from_excel,
-)
-from .ribasim_model_generator.generate_ribasim_model import generate_ribasim_model
-from .ribasim_model_generator.generate_ribasim_model_preprocessing import preprocessing_ribasim_model_tables
-from .ribasim_model_generator.generate_ribasim_model_tables import generate_ribasim_model_tables
+from .ribasim_model_generator.generate_ribasim_model import \
+    generate_ribasim_model
+from .ribasim_model_generator.generate_ribasim_model_preprocessing import \
+    preprocessing_ribasim_model_tables
+from .ribasim_model_generator.generate_ribasim_model_tables import \
+    generate_ribasim_model_tables
 from .ribasim_model_results.ribasim_results import read_ribasim_model_results
+from .ribasim_network_generator.export_load_split_nodes import (
+    read_structures_from_excel, write_structures_to_excel)
+from .ribasim_network_generator.generate_ribasim_network import \
+    generate_ribasim_network_using_split_nodes
+from .ribasim_network_generator.generate_split_nodes import \
+    add_split_nodes_based_on_selection
+from .utils.general_functions import find_file_in_directory
+
 sys.path.append("..\\..\\..\\ribasim\\python\\ribasim")
 import ribasim
 
@@ -64,6 +72,7 @@ class RibasimLumpingNetwork(BaseModel):
     uniweirs_gdf: gpd.GeoDataFrame = None
     boundaries_gdf: gpd.GeoDataFrame = None
     boundaries_data: pd.DataFrame = None
+    boundaries_timeseries_data: pd.DataFrame = None
     laterals_gdf: gpd.GeoDataFrame = None
     laterals_data: pd.DataFrame = None
     simulation_code: str = None
@@ -92,12 +101,15 @@ class RibasimLumpingNetwork(BaseModel):
     basins_outflows: pd.DataFrame = None
     node_bedlevel: pd.DataFrame = None
     node_targetlevel: pd.DataFrame = None
+    method_boundaries: int = 1
     method_laterals: int = 1
     laterals_areas_data: pd.DataFrame = None
     laterals_drainage_per_ha: pd.Series = None
     method_initial_waterlevels: int = 1
     initial_waterlevels_simulation_name: str = ""
     initial_waterlevels_timestep: int = 0
+    initial_waterlevels_areas_id_column: str = ""
+    initial_waterlevels_outside_areas: float = 0.0
     ribasim_model: ribasim.Model = None
     basis_source_types: List[str] = []
     basis_set_names: List[str] = []
@@ -116,23 +128,31 @@ class RibasimLumpingNetwork(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-
     def read_areas(self, areas_file_path: Path = None, areas_gpkg_path: Path = None, 
-                   areas_gpkg_layer: str = None, areas_id_column: str = None):
+                   areas_gpkg_layer: str = None, areas_id_column: str = None, other_columns: List[str] = []):
         if areas_file_path is not None:
             areas_gdf = gpd.read_file(areas_file_path)
         elif isinstance(areas_gpkg_path, Path) and isinstance(areas_gpkg_layer, str):
             areas_gdf = gpd.read_file(areas_gpkg_path, layer=areas_gpkg_layer)
         else:
             raise ValueError(' no areas_file_path or areas_gpkg_path/areas_gpkg_layer defined')
-        areas_gdf = areas_gdf[[areas_id_column, "geometry"]]
+        areas_gdf = areas_gdf[[areas_id_column, "geometry"] + other_columns]
         self.areas_gdf = areas_gdf.rename(columns={areas_id_column: "area_code"})
         print(f" - areas ({len(areas_gdf)}x)")
 
-
-    def read_areas_laterals(self, areas_laterals_path: Path):
+    def read_areas_laterals_timeseries(self, areas_laterals_path: Path):
         self.laterals_areas_data = pd.read_csv(areas_laterals_path, index_col=0, parse_dates=True)
 
+    def read_boundaries_timeseries_data(self, boundaries_timeseries_path: Path, skiprows=0, sep=",", index_col=0):
+        boundary_csv_data = pd.read_csv(
+            boundaries_timeseries_path, 
+            sep=sep,
+            skiprows=skiprows, 
+            index_col=index_col, 
+            parse_dates=True
+        )
+        boundary_csv_data = boundary_csv_data.interpolate()
+        self.boundaries_timeseries_data = boundary_csv_data
 
     def add_basis_network(
         self, 
@@ -149,6 +169,7 @@ class RibasimLumpingNetwork(BaseModel):
         results = None
         if source_type == "dhydro":
             results = add_dhydro_basis_network(
+                set_name=set_name,
                 model_dir=model_dir, 
                 simulation_name=simulation_name,
                 volume_tool_bat_file=dhydro_volume_tool_bat_file, 
@@ -345,7 +366,7 @@ class RibasimLumpingNetwork(BaseModel):
         saveat: int = None,
         interpolation_lines: int = 5,
         database_gpkg: str = 'database.gpkg',
-        results_dir: str = '.'
+        results_dir: str = 'results'
     ):
         if set_name not in self.basis_set_names:
             raise ValueError(f'set_name {set_name} not in available set_names')
@@ -360,7 +381,8 @@ class RibasimLumpingNetwork(BaseModel):
                         his_data=self.his_data,
                         volume_data=self.volume_data, 
                         nodes=self.nodes_gdf, 
-                        weirs=self.weirs_gdf, 
+                        weirs=self.weirs_gdf,
+                        uniweirs=self.uniweirs_gdf,
                         pumps=self.pumps_gdf, 
                         basins=self.basins_gdf, 
                         split_nodes=self.split_nodes, 
@@ -423,6 +445,8 @@ class RibasimLumpingNetwork(BaseModel):
             split_nodes=self.split_nodes,
             basins_outflows=basins_outflows,
             set_name=set_name,
+            method_boundaries=self.method_boundaries,
+            boundaries_timeseries_data=self.boundaries_timeseries_data,
             method_laterals=self.method_laterals,
             laterals_areas_data=self.laterals_areas_data,
             laterals_drainage_per_ha=self.laterals_drainage_per_ha,
@@ -560,17 +584,20 @@ class RibasimLumpingNetwork(BaseModel):
         fig, ax = plt.subplots(figsize=(7, 15))
         if self.basin_areas_gdf is not None:
             cmap = matplotlib.colors.ListedColormap(np.random.rand(len(self.basin_areas_gdf)*2, 3))
-            self.basin_areas_gdf.plot(ax=ax, column='basin_node_id', cmap=cmap, alpha=0.35)
-            self.basin_areas_gdf.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=0.25)
-        if self.ribasim_model is not None:
-            self.ribasim_model.plot(ax=ax)
-        if self.basin_areas_gdf is None and self.ribasim_model is None:
-            if self.areas_gdf is not None:
-                cmap = matplotlib.colors.ListedColormap(np.random.rand(len(self.areas_gdf)*2, 3))
-                self.areas_gdf.plot(ax=ax, column='area_code', cmap=cmap, alpha=0.35)
-                self.areas_gdf.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=0.2)
-            if self.edges_gdf is not None:
-                self.edges_gdf.plot(ax=ax, linewidth=1.5, color='blue')
+            self.basin_areas_gdf.plot(ax=ax, column='basin_node_id', cmap=cmap, alpha=0.35, zorder=1)
+            self.basin_areas_gdf.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=0.25, label='basin_areas', zorder=1)
+        elif self.areas_gdf is not None:
+            cmap = matplotlib.colors.ListedColormap(np.random.rand(len(self.areas_gdf)*2, 3))
+            self.areas_gdf.plot(ax=ax, column='area_code', cmap=cmap, alpha=0.35, zorder=1)
+            self.areas_gdf.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=0.2, label='areas', zorder=1)
+        # if self.ribasim_model is not None:
+        #     self.ribasim_model.plot(ax=ax)
+        if self.edges_gdf is not None:
+            self.edges_gdf.plot(ax=ax, linewidth=1.5, color='blue', label='hydro-objecten', zorder=2)
+        if self.split_nodes is not None:
+            self.split_nodes.plot(ax=ax, color='black', label='split_nodes', zorder=3)
+        if self.boundaries_gdf is not None:
+            self.boundaries_gdf.plot(ax=ax, color='red', marker='s', label='boundary', zorder=3)
         ax.axis('off')
         ax.legend(prop=dict(size=10), loc ="lower right", bbox_to_anchor=(1.4, 0.0))
         return fig, ax

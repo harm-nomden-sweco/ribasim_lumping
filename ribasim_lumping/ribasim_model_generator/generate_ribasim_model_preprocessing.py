@@ -51,6 +51,8 @@ def extract_bed_level_surface_storage(volume_data, nodes):
 
 
 def get_waterlevels_table_from_simulations(map_data):
+    if map_data is None:
+        return None
     node_h_df1 = map_data.mesh1d_s1.to_dataframe().unstack().mesh1d_s1
     old_index = node_h_df1.index.copy()
     node_h_df = pd.concat([
@@ -93,12 +95,18 @@ def get_discharges_table_structures_from_simulations(his_data):
     return weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df
 
 
-def get_basins_outflows_including_settings(split_nodes, basin_connections, boundary_connections, weirs, pumps):
-    gdfs_list = [weirs, pumps]
+def get_basins_outflows_including_settings(split_nodes, basin_connections, boundary_connections, weirs, uniweirs, pumps):
+    gdfs_list = [weirs, uniweirs, pumps]
     gdfs_columns_list = [
         ["structure_id", "crestlevel", "crestwidth"],
+        ["structure_id", "crestlevel"],
         ["structure_id", "orientation", "controlside", "numstages", "capacity", "startlevelsuctionside", "stoplevelsuctionside"]
     ]
+    gdf_total = gpd.GeoDataFrame()
+    for gdf, gdf_columns in zip(gdfs_list, gdfs_columns_list):
+        if gdf is None:
+            continue
+        gdf_total = pd.concat([gdf_total, gdf[gdf_columns]])
 
     basins_split_nodes = split_nodes[["split_node", "split_node_id", "split_node_node_id", "ribasim_type"]]
     basins_outflows1 = basin_connections[
@@ -108,19 +116,15 @@ def get_basins_outflows_including_settings(split_nodes, basin_connections, bound
         basins_outflows1[["basin", "split_node"]]
         .merge(basins_split_nodes, how="left", on="split_node")
     )
-    for gdf, gdf_columns in zip(gdfs_list, gdfs_columns_list):
-        if gdf is None:
-            basins_outflows1[gdf_columns] = np.nan
-        else:
-            if "structure_id" in basins_outflows1.columns:
-                basins_outflows1 = basins_outflows1.drop(columns=["structure_id"])
-            basins_outflows1 = (
-                basins_outflows1
-                .merge(gdf[gdf_columns], 
-                    how="left",
-                    left_on="split_node_id", 
-                    right_on="structure_id")
-            )
+    if "structure_id" in basins_outflows1.columns:
+        basins_outflows1 = basins_outflows1.drop(columns=["structure_id"])
+    basins_outflows1 = (
+        basins_outflows1
+        .merge(gdf_total, 
+            how="left",
+            left_on="split_node_id", 
+            right_on="structure_id")
+    )
     basins_outflows1 = (
         basins_outflows1
         .sort_values(by="basin")
@@ -131,6 +135,7 @@ def get_basins_outflows_including_settings(split_nodes, basin_connections, bound
     basins_outflows2 = basins_outflows2[["basin", "split_node", "split_node_id"]]
     basins_outflows2["ribasim_type"] = "ManningResistance"
     basins_outflows = pd.concat([basins_outflows1, basins_outflows2])
+
     basins_outflows["targetlevel"] = basins_outflows["crestlevel"].fillna(basins_outflows["stoplevelsuctionside"])
     basins_outflows["split_node_node_id"] = basins_outflows["split_node_node_id"].fillna(-1).astype(int)
     return basins_outflows.reset_index(drop=True)
@@ -175,14 +180,19 @@ def generate_node_waterlevels_table(node_h_df, node_bedlevel, node_targetlevel, 
     ])
     node_basis.index.name = "condition"
 
-    node_h = pd.DataFrame()
-    for set_name in node_h_df.index.get_level_values(0).unique():
-        node_h_set = pd.concat([
-            pd.concat([
-                node_basis, node_h_df.loc["winter"]
-            ])
-        ], keys=[set_name], names=["set"]).interpolate(axis=0)
-        node_h = pd.concat([node_h, node_h_set])
+    if node_h_df is None:
+        node_h = pd.concat([
+            node_basis.copy()
+        ], keys=[set_name], names=["set"])
+    else:
+        node_h = pd.DataFrame()
+        for set_name in node_h_df.index.get_level_values(0).unique():
+            node_h_set = pd.concat([
+                pd.concat([
+                    node_basis, node_h_df.loc["winter"]
+                ])
+            ], keys=[set_name], names=["set"]).interpolate(axis=0)
+            node_h = pd.concat([node_h, node_h_set])
     
     # check for increasing water level, if not then equal to previous
     # for i in range(len(node_h)-1):
@@ -260,7 +270,7 @@ def generate_surface_storage_for_basins(node_a, node_v, nodes):
 
 
 def preprocessing_ribasim_model_tables(
-    dummy_model, map_data, his_data, volume_data, nodes, weirs, pumps, basins, split_nodes, 
+    dummy_model, map_data, his_data, volume_data, nodes, weirs, uniweirs, pumps, basins, split_nodes, 
     basin_connections, boundary_connections, interpolation_lines
 ):
     if dummy_model:
@@ -269,6 +279,7 @@ def preprocessing_ribasim_model_tables(
             basin_connections=basin_connections,
             boundary_connections=boundary_connections,
             weirs=weirs,
+            uniweirs=uniweirs,
             pumps=pumps
         )
         return basins_outflows, None, None, None, None, None, None, None, \
@@ -280,6 +291,7 @@ def preprocessing_ribasim_model_tables(
         basin_connections=basin_connections,
         boundary_connections=boundary_connections,
         weirs=weirs,
+        uniweirs=uniweirs,
         pumps=pumps
     )
     node_targetlevel = get_target_levels_nodes_using_weirs_pumps(nodes, basins_outflows)

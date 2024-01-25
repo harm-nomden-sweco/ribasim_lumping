@@ -1,14 +1,15 @@
-import os
-from pathlib import Path
 import configparser
-from typing import Dict, List
+import os
 from collections import OrderedDict
+from pathlib import Path
+from typing import Dict, List
+
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 from pydantic import BaseModel
-from shapely.ops import nearest_points, snap
 from shapely.geometry import LineString, Point
+from shapely.ops import nearest_points, snap
 
 
 def replace_string_in_file(file_path, string, new_string):
@@ -23,6 +24,7 @@ def find_file_in_directory(directory, file_name, start_end='end') -> Path:
     """Find path of file in directory"""
     selected_file = None
     for root, dirs, files in os.walk(directory):
+        # print(root, dirs, files)
         for file in files:
             if start_end == 'end':
                 if file.endswith(file_name):
@@ -30,6 +32,7 @@ def find_file_in_directory(directory, file_name, start_end='end') -> Path:
             elif start_end == 'start':
                 if file.startswith(file_name):
                     selected_file = os.path.join(root, file)
+    # print(selected_file)
     if selected_file is None:
         return None
     return Path(selected_file)

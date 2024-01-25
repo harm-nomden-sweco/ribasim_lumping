@@ -185,24 +185,19 @@ def create_basin_areas_based_on_drainage_areas(
         areas_orig = areas.copy()
         areas = areas.sjoin(edges_sel[["basin", "edge_length", "geometry"]])
         areas = areas.drop(columns=["index_right"]).reset_index(drop=True)
-        areas = areas.groupby(by=["area", "basin"], as_index=False).agg(
-            {"edge_length": "sum"}
-        )
-        areas = areas.sort_values(
-            by=["area", "edge_length"], ascending=[True, False]
-        ).drop_duplicates(subset=["area"], keep="first")
-        areas = (
-            areas[["area", "basin", "edge_length"]]
-            .sort_values(by="area")
-            .merge(areas_orig, how="outer", left_on="area", right_on="area")
-        )
+        areas = areas.groupby(by=["area", "basin"], as_index=False).agg({"edge_length": "sum"})
+        areas = (areas.sort_values(by=["area", "edge_length"], ascending=[True, False])
+                 .drop_duplicates(subset=["area"], keep="first"))
+        areas = (areas[["area", "basin", "edge_length"]]
+                 .sort_values(by="area")
+                 .merge(areas_orig, how="outer", left_on="area", right_on="area"))
         areas["basin"] = areas["basin"].fillna(-1).astype(int)
         areas = gpd.GeoDataFrame(areas, geometry="geometry", crs=edges.crs)
         areas = areas.sort_values(by="area")
         basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=["area"])
         basin_areas["basin"] = basin_areas["basin"].astype(int)
         basin_areas["area_ha"] = basin_areas.geometry.area / 10000.0
-        basin_areas["color_no"] = basin_areas.index % 25
+        basin_areas["color_no"] = basin_areas.index % 50
         print(
             f" - define for each Ribasim-Basin the related basin area ({len(basin_areas)}x)"
         )

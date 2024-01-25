@@ -11,6 +11,7 @@ from .read_dhydro_simulations_utils import (
 
 
 def add_dhydro_basis_network(
+    set_name: str,
     model_dir: Path, 
     simulation_name: str, 
     volume_tool_bat_file: Path = None, 
@@ -21,7 +22,8 @@ def add_dhydro_basis_network(
     """Extracts nodes, edges, weirs, pumps from his/map"""
     basis_simulation_path = Path(model_dir, simulation_name)
     results = get_dhydro_data_from_simulation(
-        basis_simulation_path, 
+        simulation_path=basis_simulation_path, 
+        set_name=set_name,
         crs=crs,
         volume_tool_bat_file=volume_tool_bat_file, 
         volume_tool_force=volume_tool_force,

@@ -2,19 +2,22 @@
 Read network locations from D-Hydro simulation
 Harm Nomden (Sweco)
 """
-from pathlib import Path
-import subprocess
 import configparser
-import pandas as pd
-import geopandas as gpd
 import datetime
-from shapely.geometry import Point, LineString
+import subprocess
+from pathlib import Path
+
+import geopandas as gpd
+import hydrolib.core.dflowfm as hcdfm
+import pandas as pd
 import xarray as xr
 import xugrid as xu
-import hydrolib.core.dflowfm as hcdfm
-from ..utils.general_functions import find_file_in_directory, \
-    find_directory_in_directory, find_nearest_nodes, get_points_on_linestrings_based_on_distances, \
-        replace_string_in_file, read_ini_file_with_similar_sections, find_nearest_edges_no
+from shapely.geometry import LineString, Point
+
+from ..utils.general_functions import (
+    find_directory_in_directory, find_file_in_directory, find_nearest_edges_no,
+    find_nearest_nodes, get_points_on_linestrings_based_on_distances,
+    read_ini_file_with_similar_sections, replace_string_in_file)
 
 
 def get_dhydro_files(simulation_path: Path):
@@ -223,7 +226,7 @@ def check_number_of_pumps_at_pumping_station(pumps_gdf: gpd.GeoDataFrame):
     return pumps_gdf
 
 
-def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame):
+def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame, set_name: str):
     """Get all DHydro structures dataframes"""
     list_structure_types = list(structures_gdf['object_type'].unique())
     structures_gdf_dict = {}
@@ -237,15 +240,16 @@ def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame):
         if 'comments' in structure_gdf.columns:
             structure_gdf.loc[:, 'comments'] = structure_gdf.loc[:, 'comments'].astype(str)
         # in case of pumps check if multiple pumps in one pumping station
-        if structure_type == "pump" and ~structure_gdf.empty:
-            old_no_pumps = len(structure_gdf)
-            structure_gdf = check_number_of_pumps_at_pumping_station(structure_gdf)
-            if old_no_pumps > len(structure_gdf):
-                print(f" pumps ({old_no_pumps}x->{len(structure_gdf)}x)", end="", flush=True)
+        if structure_type == "pump":
+            if ~structure_gdf.empty:
+                old_no_pumps = len(structure_gdf)
+                structure_gdf = check_number_of_pumps_at_pumping_station(structure_gdf)
+                if old_no_pumps > len(structure_gdf):
+                    print(f" pumps ({old_no_pumps}x->{len(structure_gdf)}x)", end="", flush=True)
+                else:
+                    print(f" pumps ({len(structure_gdf)}x)", end="", flush=True)
             else:
-                print(f" pumps ({len(structure_gdf)}x)", end="", flush=True)
-        else:
-            print(f" {structure_type}s ({len(structure_gdf)}x)", end="", flush=True)
+                print(f" {structure_type}s ({len(structure_gdf)}x)", end="", flush=True)
 
         structure_gdf = structure_gdf.dropna(axis=1, how='all')
         structures_gdf_dict[structure_type] = structure_gdf
@@ -380,6 +384,7 @@ def get_dhydro_volume_based_on_basis_simulations(
 
 def get_dhydro_data_from_simulation(
     simulation_path: Path, 
+    set_name: str,
     volume_tool_bat_file: Path, 
     volume_tool_force: bool = False,
     volume_tool_increment: float = 0.1,
@@ -412,7 +417,7 @@ def get_dhydro_data_from_simulation(
         branches_gdf=branches_gdf, 
         edges_gdf=edges_gdf
     )
-    structures_dict = split_dhydro_structures(structures_gdf)
+    structures_dict = split_dhydro_structures(structures_gdf, set_name)
 
     boundaries_gdf, laterals_gdf = get_dhydro_external_forcing_locations(
         external_forcing_file=files['external_forcing_file'], 
