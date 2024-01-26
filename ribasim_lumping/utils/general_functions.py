@@ -354,6 +354,8 @@ def snap_to_network(
             nodes_bufdist=buffer_distance * 0.1,
             n_edges_to_node_limit=3,
         )
+        # get node no or edge no on which point is located
+        points = get_node_no_and_edge_no_for_points(points, edges=edges, nodes=nodes)
         # print out all non-snapped split nodes
         if any([(n == -1) and (e == -1) for n, e in zip(points['node_no'], points['edge_no'])]):
             print(f"The following split nodes could not be snapped to nodes or edges within buffer distance:")
@@ -369,6 +371,8 @@ def snap_to_network(
             nodes=nodes, 
             nodes_bufdist=buffer_distance,
         )
+        # get node no or edge no on which point is located
+        points = get_node_no_and_edge_no_for_points(points, edges=None, nodes=nodes)
         # print out all non-snapped boundaries
         if any([(n == -1) for n in points['node_no']]):
             print(f"The following boundaries could not be snapped to nodes within buffer distance:")
@@ -475,8 +479,6 @@ def snap_points_to_nodes_and_edges(
 
     # overwrite geoms with newly snapped point locations
     points['geometry'] = new_points
-    # get node no or edge no on which point is located
-    points = get_node_no_and_edge_no_for_points(points, edges=edges, nodes=nodes)
 
     return points
 
