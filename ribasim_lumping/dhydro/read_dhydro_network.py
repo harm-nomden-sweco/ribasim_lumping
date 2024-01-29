@@ -9,6 +9,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import hydrolib.core.dflowfm as hcdfm
+import numpy as np
 import pandas as pd
 import xarray as xr
 import xugrid as xu
@@ -195,34 +196,45 @@ def get_dhydro_structures_locations(
     for object_type in object_types:
         len_objects = len(structures_gdf[structures_gdf.object_type==object_type])
         print(f" {object_type} ({len_objects}x),", end="", flush=True)
+    structures_gdf["node_no"] = -1
     return structures_gdf
 
 
-def check_number_of_pumps_at_pumping_station(pumps_gdf: gpd.GeoDataFrame):
+def check_number_of_pumps_at_pumping_station(pumps_gdf: gpd.GeoDataFrame, set_name: str):
     """Check number of pumps at pumping station and combine them into one representative pump
     Input:  Geodataframe with pumps with multiple per location
     Output: Geodataframe with one pump per location. 
             Total capacity (sum), Max start level, Min stop level"""
-    pumps_gdf = pumps_gdf.groupby(pumps_gdf.geometry.to_wkt(), as_index=False).agg(dict(
-        structure_id='first',
-        branch_id='first', 
-        geometry='first',
-        comments='first', 
-        object_type='first',
-        chainage='first',
-        orientation='first',
-        controlside='first',
-        numstages='first',
-        capacity='sum',
-        startlevelsuctionside='max',
-        stoplevelsuctionside='min',
-        startleveldeliveryside='min',
-        stopleveldeliveryside='max',
-        numreductionlevels='first',
-        head='first',
-        reductionfactor='first',
-        edge_no='first'
-    )).reset_index(drop=True).pipe(gpd.GeoDataFrame)
+    crs = pumps_gdf.crs
+    pumps_gdf = pumps_gdf.groupby(
+        pumps_gdf.geometry.to_wkt(), 
+        as_index=False
+    ).agg({
+        ('general', 'structure_id'): 'first',
+        ('general', 'branch_id'): 'first', 
+        ('general', 'object_type'): 'first',
+        ('general', 'chainage'): 'first',
+        ('general', 'edge_no'): 'first',
+        ('general', 'node_no'): 'first',
+        ('structure', 'comments'): 'first', 
+        ('structure', 'orientation'): 'first',
+        ('structure', 'controlside'): 'first',
+        ('structure', 'numstages'): 'first',
+        ('structure', 'capacity'): 'sum',
+        ('structure', 'numreductionlevels'): 'first',
+        ('structure', 'head'): 'first',
+        ('structure', 'reductionfactor'): 'first',
+        (set_name, 'startlevelsuctionside'): 'max',
+        (set_name, 'stoplevelsuctionside'): 'min',
+        (set_name, 'startleveldeliveryside'): 'min',
+        (set_name, 'stopleveldeliveryside'): 'max',
+        ('geometry', ''): 'first',
+    }).reset_index(drop=True)
+    pumps_gdf = gpd.GeoDataFrame(
+        pumps_gdf.drop(columns=("geometry", '')),
+        geometry=pumps_gdf["geometry"],
+        crs=crs
+    )
     return pumps_gdf
 
 
@@ -235,24 +247,62 @@ def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame, set_name: str):
         if structure_type == "compound":
             continue
         # get structure type data
-        structure_gdf = structures_gdf.loc[structures_gdf["object_type"] == structure_type]
+        structure_gdf = structures_gdf.loc[structures_gdf["object_type"] == structure_type].dropna(how='all', axis=1)
+        
         # comments are sometimes a separate object instead of string
         if 'comments' in structure_gdf.columns:
             structure_gdf.loc[:, 'comments'] = structure_gdf.loc[:, 'comments'].astype(str)
-        # in case of pumps check if multiple pumps in one pumping station
+        
+        # create multi-index to separate general values from set-specific values.
+        header_0 = ["structure_id", "branch_id", "object_type", "chainage", "edge_no", "node_no"]
+        headers_2 = {
+            'weir': ["crestlevel"],
+            'uniweir': ["crestlevel", "yvalues", "zvalues"],
+            'universalWeir': ["crestlevel", "yvalues", "zvalues"],
+            'orifice': ["crestlevel", "gateloweredgelevel", "uselimitflowpos", "limitflowpos", "uselimitflowneg", "limitflowneg"],
+            'pump': ["startlevelsuctionside", "stoplevelsuctionside", "startleveldeliveryside", "stopleveldeliveryside"],
+        }
+        if structure_type in headers_2.keys():
+            header_2 = headers_2[structure_type]
+        else:
+            header_2 = []
+        if structure_type not in ['pump', 'culvert']:
+            header_2 += ["upstream_upperlimit", "upstream_setpoint", "upstream_lowerlimit", 
+                         "downstream_upperlimit", "downstream_setpoint", "downstream_lowerlimit"]
+            for h in header_2:
+                if h not in structure_gdf.columns:
+                    structure_gdf[h] = np.nan
+        header_1 = [c for c in structure_gdf.columns if c not in header_0 + header_2 + ['geometry']]
+
+        structure_gdf = gpd.GeoDataFrame(
+            pd.concat([
+                structure_gdf[header_0], 
+                structure_gdf[header_1],
+                structure_gdf[header_2]
+            ], keys=['general', 'structure', set_name], axis=1),
+            geometry=structure_gdf['geometry'],
+            crs=structure_gdf.crs
+        )
+
+        if structure_type == "culvert":
+            structure_gdf[("structure", "crestlevel")] = structure_gdf[[("structure", "leftlevel"), ("structure", "rightlevel")]].max(axis=1)
+
+        # in case of pumps: 
+        # - check if multiple pumps in one pumping station
         if structure_type == "pump":
+            # check for multiple pumps if gdf is filled
             if ~structure_gdf.empty:
                 old_no_pumps = len(structure_gdf)
-                structure_gdf = check_number_of_pumps_at_pumping_station(structure_gdf)
+                structure_gdf = check_number_of_pumps_at_pumping_station(structure_gdf, set_name)
                 if old_no_pumps > len(structure_gdf):
                     print(f" pumps ({old_no_pumps}x->{len(structure_gdf)}x)", end="", flush=True)
                 else:
                     print(f" pumps ({len(structure_gdf)}x)", end="", flush=True)
+                # display(structure_gdf.head())
             else:
                 print(f" {structure_type}s ({len(structure_gdf)}x)", end="", flush=True)
 
-        structure_gdf = structure_gdf.dropna(axis=1, how='all')
-        structures_gdf_dict[structure_type] = structure_gdf
+        structures_gdf_dict[structure_type] = structure_gdf.sort_values(by=("general", "structure_id")).reset_index(drop=True)
     print(f" ")
     return structures_gdf_dict
 
@@ -417,6 +467,7 @@ def get_dhydro_data_from_simulation(
         branches_gdf=branches_gdf, 
         edges_gdf=edges_gdf
     )
+    # display(structures_gdf.head())
     structures_dict = split_dhydro_structures(structures_gdf, set_name)
 
     boundaries_gdf, laterals_gdf = get_dhydro_external_forcing_locations(

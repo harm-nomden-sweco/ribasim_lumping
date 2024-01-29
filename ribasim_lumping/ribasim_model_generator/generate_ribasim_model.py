@@ -29,6 +29,7 @@ def generate_ribasim_nodes_static(
     ribasim_nodes_static = ribasim_nodes_static.set_index("node_id")
     ribasim_nodes_static = ribasim_nodes_static[["ribasim_type", "name", "geometry"]]
     ribasim_nodes_static = ribasim_nodes_static.rename(columns={"ribasim_type": "type"})
+
     if ~ribasim_nodes_static.empty:
         ribasim_nodes = ribasim.Node(df=ribasim_nodes_static)
     else:
@@ -212,7 +213,7 @@ def generate_ribasim_model(
         basin_connections=basin_connections,
         boundary_connections=boundary_connections
     )
-
+    
     ribasim_basins = generate_ribasim_basins(
         basin_profile=tables['basin_profile'],
         basin_time=tables['basin_time'], 

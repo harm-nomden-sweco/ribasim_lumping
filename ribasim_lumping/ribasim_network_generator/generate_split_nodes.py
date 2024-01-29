@@ -28,7 +28,7 @@ def get_split_nodes_based_on_type(
         False
     ]
     split_nodes_columns = [
-        "node_no", "edge_no", "split_node_id", "geometry", "object_type", "split_type"
+        "split_node_id", "geometry", "object_type", "split_type", "edge_no", "node_no"
     ]
     split_nodes = gpd.GeoDataFrame(
         columns=split_nodes_columns,
@@ -37,8 +37,10 @@ def get_split_nodes_based_on_type(
     )
     for gdf_include, gdf in zip(list_objects, list_gdfs):
         if gdf_include and gdf is not None:
-            gdf = gdf.rename({"structure_id": "split_node_id"}, axis=1)
-            split_nodes = pd.concat([split_nodes, gdf])
+            gdf = gdf.rename({"structure_id": "split_node_id"}, axis=1, level=1)
+            split_nodes = pd.concat(
+                [split_nodes, gdf['general'].merge(gdf['geometry'], left_index=True, right_index=True)]
+            )
     return split_nodes[split_nodes_columns]
 
 

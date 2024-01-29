@@ -17,6 +17,7 @@ import xarray as xr
 import xugrid as xu
 from pydantic import BaseModel
 from shapely.geometry import Point
+import contextily as cx
 
 from .dhydro.read_dhydro_network import \
     get_dhydro_volume_based_on_basis_simulations
@@ -106,7 +107,7 @@ class RibasimLumpingNetwork(BaseModel):
     laterals_areas_data: pd.DataFrame = None
     laterals_drainage_per_ha: pd.Series = None
     method_initial_waterlevels: int = 1
-    initial_waterlevels_simulation_name: str = ""
+    initial_waterlevels_set_name: str = ""
     initial_waterlevels_timestep: int = 0
     initial_waterlevels_areas_id_column: str = ""
     initial_waterlevels_outside_areas: float = 0.0
@@ -140,8 +141,8 @@ class RibasimLumpingNetwork(BaseModel):
         self.areas_gdf = areas_gdf.rename(columns={areas_id_column: "area_code"})
         print(f" - areas ({len(areas_gdf)}x)")
 
-    def read_areas_laterals_timeseries(self, areas_laterals_path: Path):
-        self.laterals_areas_data = pd.read_csv(areas_laterals_path, index_col=0, parse_dates=True)
+    def read_areas_laterals_timeseries(self, areas_laterals_path: Path, sep: str = ',', index_col: int = 0, dayfirst=False):
+        self.laterals_areas_data = pd.read_csv(areas_laterals_path, index_col=index_col, sep=sep, parse_dates=True, dayfirst=dayfirst)
 
     def read_boundaries_timeseries_data(self, boundaries_timeseries_path: Path, skiprows=0, sep=",", index_col=0):
         boundary_csv_data = pd.read_csv(
@@ -190,9 +191,66 @@ class RibasimLumpingNetwork(BaseModel):
 
         if results is not None:
             self.network_data, self.branches_gdf, self.network_nodes_gdf, self.edges_gdf, \
-                self.nodes_gdf, self.boundaries_gdf, self.laterals_gdf, self.weirs_gdf, \
-                self.uniweirs_gdf, self.pumps_gdf, self.orifices_gdf, self.bridges_gdf, \
-                self.culverts_gdf, self.boundaries_data, self.laterals_data, self.volume_data = results
+                self.nodes_gdf, self.boundaries_gdf, self.laterals_gdf, \
+                weirs_gdf, uniweirs_gdf, pumps_gdf, \
+                orifices_gdf, self.bridges_gdf, self.culverts_gdf, \
+                self.boundaries_data, self.laterals_data, self.volume_data = results
+            if pumps_gdf is not None:
+                if self.pumps_gdf is None:
+                    self.pumps_gdf = pumps_gdf.copy()
+                else:
+                    self.pumps_gdf = gpd.GeoDataFrame(
+                        self.pumps_gdf.drop(columns=['geometry']).merge(
+                            pumps_gdf[[set_name, 'geometry']], 
+                            how='outer', 
+                            left_index=True,
+                            right_index=True
+                        ),
+                        geometry="geometry",
+                        crs=pumps_gdf.crs
+                    )
+            if weirs_gdf is not None:
+                if self.weirs_gdf is None:
+                    self.weirs_gdf = weirs_gdf.copy()
+                else:
+                    self.weirs_gdf = gpd.GeoDataFrame(
+                        self.weirs_gdf.drop(columns=['geometry']).merge(
+                            weirs_gdf[[set_name, 'geometry']], 
+                            how='outer', 
+                            left_index=True,
+                            right_index=True
+                        ),
+                        geometry="geometry",
+                        crs=pumps_gdf.crs
+                    )
+            if uniweirs_gdf is not None:
+                if self.uniweirs_gdf is None:
+                    self.uniweirs_gdf = uniweirs_gdf.copy()
+                else:
+                    self.uniweirs_gdf = gpd.GeoDataFrame(
+                        self.uniweirs_gdf.drop(columns=['geometry']).merge(
+                            uniweirs_gdf[[set_name, 'geometry']], 
+                            how='outer', 
+                            left_index=True,
+                            right_index=True
+                        ),
+                        geometry="geometry",
+                        crs=pumps_gdf.crs
+                    )
+            if orifices_gdf is not None:
+                if self.orifices_gdf is None:
+                    self.orifices_gdf = orifices_gdf.copy()
+                else:
+                    self.orifices_gdf = gpd.GeoDataFrame(
+                        self.orifices_gdf.drop(columns=['geometry']).merge(
+                            orifices_gdf[[set_name, 'geometry']], 
+                            how='outer', 
+                            left_index=True,
+                            right_index=True
+                        ),
+                        geometry="geometry",
+                        crs=pumps_gdf.crs
+                    )
         return results
 
 
@@ -223,6 +281,61 @@ class RibasimLumpingNetwork(BaseModel):
         return self.his_data, self.map_data
 
 
+    def export_or_update_all_ribasim_structures_specs(self, structure_specs_dir_path: Path):
+        for structure_type in ['pump', 'weir', 'orifice', 'culvert']:
+            structure_specs_path = Path(structure_specs_dir_path, f"ribasim_{structure_type}s_specs.xlsx")
+            self.export_or_update_ribasim_structure_specs(
+                structure_type=structure_type,
+                structure_specs_path=structure_specs_path
+            )
+
+
+    def export_or_update_ribasim_structure_specs(self, structure_type: str, structure_specs_path: Path):
+        if structure_type not in ['pump', 'weir', 'orifice', 'culvert']:
+            raise ValueError(f" x not able export/update structure type {structure_type}")
+        gdfs = dict(
+            pump=self.pumps_gdf,
+            weir=self.weirs_gdf,
+            orifice=self.orifices_gdf,
+            culvert=self.culverts_gdf
+        )
+        structures_columns = dict(
+            pump=['capacity'],
+            weir=['crestwidth'],
+            orifice=['crestwidth'],
+            culvert=['crestwidth']
+        )
+        control_headers = ["upstream_upperlimit", "upstream_setpoint", "upstream_lowerlimit", 
+                           "downstream_upperlimit", "downstream_setpoint", "downstream_lowerlimit"]
+        sets_columns = dict(
+            pump=['startlevelsuctionside', 'stoplevelsuctionside', 'startleveldeliveryside', 'stopleveldeliveryside'],
+            weir=['crestlevel'] + control_headers,
+            orifice=['crestlevel'] + control_headers,
+            culvert=['crestlevel'] + control_headers
+        )
+        gdf = gdfs[structure_type]
+        general_columns = ['structure_id']
+        structure_columns = structures_columns[structure_type]
+        set_columns = sets_columns[structure_type]
+        all_columns_second_level = general_columns + structure_columns + set_columns
+
+        if not structure_specs_path.exists():
+            print(f" x ribasim_input_{structure_type} ('{structure_specs_path}') DOES NOT exist. network.{structure_type}s_gdf will be EXPORTED.")
+            gdf_export = gdf.drop(columns=[col for col in gdf.columns if col[1] not in all_columns_second_level])
+            gdf_export.to_excel(structure_specs_path)
+            return gdf
+
+        print(f" x ribasim_input_{structure_type} ('{structure_specs_path}') DOES exist. network.{structure_type}s_gdf will be UPDATED.")
+        gdf_input = pd.read_excel(structure_specs_path, header=[0,1], index_col=0)
+        for set_name in self.basis_set_names:
+            if set_name in gdf_input.columns.get_level_values(level=0):
+                gdf_input[set_name] = gdf_input[set_name].replace('', np.nan)
+        for col in gdf.columns:
+            if col[1] in all_columns_second_level:
+                gdf[col] = gdf_input[col]
+        return gdf
+
+
     def add_split_nodes(
         self,
         stations: bool = False,
@@ -242,10 +355,10 @@ class RibasimLumpingNetwork(BaseModel):
             stations=stations,
             pumps=pumps,
             weirs=weirs,
-            orifices=orifices,
-            bridges=bridges,
-            culverts=culverts,
             uniweirs=uniweirs,
+            orifices=orifices,
+            culverts=culverts,
+            bridges=bridges,
             edges=edges,
             structures_ids_to_include=structures_ids_to_include,
             structures_ids_to_exclude=structures_ids_to_exclude,
@@ -265,19 +378,19 @@ class RibasimLumpingNetwork(BaseModel):
         return self.split_nodes
 
 
-    def add_hydamo_split_nodes_boundaries(self, model_dir: Path = None, areas_id_column: str = None):
-        if model_dir is None:
-            model_dir = self.hydamo_basis_dir
-        areas_gpkg_path = Path(model_dir, "areas.gpkg")
-        areas_gpkg_layer = "areas"
-        self.read_areas(
-            areas_gpkg_path=areas_gpkg_path, 
-            areas_gpkg_layer=areas_gpkg_layer, 
-            areas_id_column=areas_id_column
-        )
-        ribasim_input_gpkg_path = Path(model_dir, "ribasim_input.gpkg")
-        split_nodes = gpd.read_file(ribasim_input_gpkg_path, layer="split_nodes")
-        boundaries = gpd.read_file(ribasim_input_gpkg_path, layer="boundaries")
+    # def add_hydamo_split_nodes_boundaries(self, model_dir: Path = None, areas_id_column: str = None):
+    #     if model_dir is None:
+    #         model_dir = self.hydamo_basis_dir
+    #     areas_gpkg_path = Path(model_dir, "areas.gpkg")
+    #     areas_gpkg_layer = "areas"
+    #     self.read_areas(
+    #         areas_gpkg_path=areas_gpkg_path, 
+    #         areas_gpkg_layer=areas_gpkg_layer, 
+    #         areas_id_column=areas_id_column
+    #     )
+    #     ribasim_input_gpkg_path = Path(model_dir, "ribasim_input.gpkg")
+    #     split_nodes = gpd.read_file(ribasim_input_gpkg_path, layer="split_nodes")
+    #     boundaries = gpd.read_file(ribasim_input_gpkg_path, layer="boundaries")
 
 
     @property
@@ -384,11 +497,14 @@ class RibasimLumpingNetwork(BaseModel):
                         weirs=self.weirs_gdf,
                         uniweirs=self.uniweirs_gdf,
                         pumps=self.pumps_gdf, 
+                        culverts=self.culverts_gdf,
+                        orifices=self.orifices_gdf,
                         basins=self.basins_gdf, 
                         split_nodes=self.split_nodes, 
                         basin_connections=self.basin_connections_gdf, 
                         boundary_connections=self.boundary_connections_gdf,
-                        interpolation_lines=interpolation_lines
+                        interpolation_lines=interpolation_lines,
+                        set_names=self.basis_set_names
                     )
         
         self.nodes_gdf["bedlevel"] = orig_bedlevel
@@ -409,26 +525,27 @@ class RibasimLumpingNetwork(BaseModel):
         self.basins_outflows = basins_outflows
         self.node_bedlevel = node_bedlevel
         self.node_targetlevel = node_targetlevel
-        
+
         basin_h_initial = None
-        if self.method_initial_waterlevels == 1:
-            raise ValueError('method initial waterlevels = 1 not yet implemented')
-        elif self.method_initial_waterlevels == 2:
-            ind_initial_h = 0
-            for i_set_name, i_simulations_names, i_sim_ts in zip(self.set_names, self.simulations_names, self.simulations_ts):
-                if i_set_name != set_name:
-                    ind_initial_h += len(i_sim_ts)
-                else:
-                    for i_ts, ts in enumerate(i_sim_ts):
-                        if i_ts == self.initial_waterlevels_timestep:
-                            break
-                        ind_initial_h += 1
-                    break
-            basin_h_initial = basin_h.loc[set_name].iloc[ind_initial_h + 2 + interpolation_lines*2]
-        elif self.method_initial_waterlevels == 3:
-            raise ValueError('method initial waterlevels = 3 not yet implemented')
-        else:
-            raise ValueError('method initial waterlevels not 1, 2 or 3')
+        if not dummy_model:
+            if self.method_initial_waterlevels == 1:
+                basin_h_initial = basin_h.loc[set_name].loc["targetlevel"]
+                # raise ValueError('method initial waterlevels = 1 not yet implemented')
+            elif self.method_initial_waterlevels == 2:
+                ind_initial_h = 0
+                for i_set_name, i_simulations_names, i_sim_ts in zip(self.set_names, self.simulations_names, self.simulations_ts):
+                    if i_set_name != set_name:
+                        ind_initial_h += len(i_sim_ts)
+                    else:
+                        for i_ts, ts in enumerate(i_sim_ts):
+                            if i_ts == self.initial_waterlevels_timestep:
+                                break
+                            ind_initial_h += 1
+                basin_h_initial = basin_h.loc[set_name].iloc[ind_initial_h + 2 + interpolation_lines*2]
+            elif self.method_initial_waterlevels == 3:
+                raise ValueError('method initial waterlevels = 3 not yet implemented')
+            else:
+                raise ValueError('method initial waterlevels not 1, 2 or 3')
 
         # generate ribasim model tables
         tables = generate_ribasim_model_tables(
@@ -551,7 +668,10 @@ class RibasimLumpingNetwork(BaseModel):
         print(" - available: ", end="", flush=True)
         for gdf_name, gdf in gdfs.items():
             print(f"{gdf_name}, ", end="", flush=True)
-            gdf.to_file(gpkg_path, layer=gdf_name, driver="GPKG")
+            gdf_copy = gdf.copy()
+            if isinstance(gdf_copy.columns, pd.MultiIndex):
+                gdf_copy.columns = ['__'.join(col).strip('__') for col in gdf_copy.columns.values]
+            gdf_copy.to_file(gpkg_path, layer=gdf_name, driver="GPKG")
 
         print("")
         print(" - not available: ", end="", flush=True)
@@ -581,7 +701,7 @@ class RibasimLumpingNetwork(BaseModel):
         print(f"Export location: {qgz_path}")
 
     def plot(self):
-        fig, ax = plt.subplots(figsize=(7, 15))
+        fig, ax = plt.subplots(figsize=(10, 10))
         if self.basin_areas_gdf is not None:
             cmap = matplotlib.colors.ListedColormap(np.random.rand(len(self.basin_areas_gdf)*2, 3))
             self.basin_areas_gdf.plot(ax=ax, column='basin_node_id', cmap=cmap, alpha=0.35, zorder=1)
@@ -593,13 +713,14 @@ class RibasimLumpingNetwork(BaseModel):
         # if self.ribasim_model is not None:
         #     self.ribasim_model.plot(ax=ax)
         if self.edges_gdf is not None:
-            self.edges_gdf.plot(ax=ax, linewidth=1.5, color='blue', label='hydro-objecten', zorder=2)
+            self.edges_gdf.plot(ax=ax, linewidth=1, color='blue', label='hydro-objecten', zorder=2)
         if self.split_nodes is not None:
             self.split_nodes.plot(ax=ax, color='black', label='split_nodes', zorder=3)
         if self.boundaries_gdf is not None:
             self.boundaries_gdf.plot(ax=ax, color='red', marker='s', label='boundary', zorder=3)
         ax.axis('off')
         ax.legend(prop=dict(size=10), loc ="lower right", bbox_to_anchor=(1.4, 0.0))
+        cx.add_basemap(ax, crs=self.areas_gdf.crs)
         return fig, ax
 
     def export_structures_to_excel(
