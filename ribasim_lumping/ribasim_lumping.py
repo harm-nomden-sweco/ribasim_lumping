@@ -130,14 +130,13 @@ class RibasimLumpingNetwork(BaseModel):
         arbitrary_types_allowed = True
 
     def read_areas(self, areas_file_path: Path = None, areas_gpkg_path: Path = None, 
-                   areas_gpkg_layer: str = None, areas_id_column: str = None, other_columns: List[str] = []):
+                   areas_gpkg_layer: str = None, areas_id_column: str = None):
         if areas_file_path is not None:
             areas_gdf = gpd.read_file(areas_file_path)
         elif isinstance(areas_gpkg_path, Path) and isinstance(areas_gpkg_layer, str):
             areas_gdf = gpd.read_file(areas_gpkg_path, layer=areas_gpkg_layer)
         else:
-            raise ValueError(' no areas_file_path or areas_gpkg_path/areas_gpkg_layer defined')
-        areas_gdf = areas_gdf[[areas_id_column, "geometry"] + other_columns]
+            raise ValueError(' no areas_file_path or areas_gpkg_path+areas_gpkg_layer defined')
         self.areas_gdf = areas_gdf.rename(columns={areas_id_column: "area_code"})
         print(f" - areas ({len(areas_gdf)}x)")
 
