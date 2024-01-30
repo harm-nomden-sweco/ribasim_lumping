@@ -167,23 +167,23 @@ def generate_tabulated_rating_curve(
         discharges = discharge_df[split_node_name]
 
         curve = pd.concat([water_levels_basin, discharges.replace(-999.0, np.nan)], axis=1)
-        curve.columns = ["level", "flow_rate"]
-        curve.iloc[0]["flow_rate"] = 0.0
-        curve.iloc[1]["flow_rate"] = 0.0
-        curve.iloc[2]["flow_rate"] = 0.0
-        curve.iloc[3]["flow_rate"] = 0.0
+        curve.columns = ["level", "discharge"]
+        curve.iloc[0]["discharge"] = 0.0
+        curve.iloc[1]["discharge"] = 0.0
+        curve.iloc[2]["discharge"] = 0.0
+        curve.iloc[3]["discharge"] = 0.0
         curve["node_id"] = trc["split_node_node_id"]
         curve = curve.interpolate().reset_index(drop=True)
-        curve.loc[curve["flow_rate"] < 0.0, "flow_rate"] = 0.0
+        curve.loc[curve["discharge"] < 0.0, "discharge"] = 0.0
 
-        if curve["flow_rate"].max() < 0.01:
+        if curve["discharge"].max() < 0.01:
             print(f" x basin_node_id {basin_node_id}: no discharge over split_node ({split_type}): {trc.split_node_id} in D-HYDRO simulation")
 
             def weir_formula(crestlevel, crestwidth, waterlevel):
                 return 2.0/3.0 * max(0.0, waterlevel - crestlevel)**(3.0/2.0) * (2*9.81)**0.5 * crestwidth
 
             curve.loc[3:, "level"] = [i*0.05 + trc.crestlevel for i in range(0, len(curve)-3)]
-            curve["flow_rate"] = curve.apply(lambda x: weir_formula(trc.crestlevel, trc.crestwidth, x["level"]), axis=1).fillna(0.0)
+            curve["discharge"] = curve.apply(lambda x: weir_formula(trc.crestlevel, trc.crestwidth, x["level"]), axis=1).fillna(0.0)
 
         curves = pd.concat([curves, curve])
     return curves.drop_duplicates().reset_index(drop=True)
@@ -275,14 +275,16 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, 
 
     # create subgrid
     if basins_nodes_h_relation is not None:
+        print("subgrid: based on water level relation basin and nodes")
         tables['basin_subgrid'] = basins_nodes_h_relation[["node_no", "basin_node_id", "basin_h", "node_no_h"]]
+        tables['basin_subgrid']["x"] = basins_nodes_h_relation.geometry.x
+        tables['basin_subgrid']["y"] = basins_nodes_h_relation.geometry.y
         tables['basin_subgrid'] = tables['basin_subgrid'].rename(columns={
             "node_no": "subgrid_id", 
             "basin_node_id": "node_id", 
             "basin_h": "basin_level", 
             "node_no_h": "subgrid_level"
         })
-        print("subgrid: based on water level relation basin and nodes")
 
     # create laterals table
     if method_laterals == 1:

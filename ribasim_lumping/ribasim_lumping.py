@@ -92,7 +92,7 @@ class RibasimLumpingNetwork(BaseModel):
     basins_h_df: pd.DataFrame = None
     basins_a_df: pd.DataFrame = None
     basins_v_df: pd.DataFrame = None
-    basins_nodes_h_relation: pd.DataFrame = None
+    basins_nodes_h_relation: gpd.GeoDataFrame = None
     edge_q_df: pd.DataFrame = None
     weir_q_df: pd.DataFrame = None
     uniweir_q_df: pd.DataFrame = None
@@ -581,9 +581,6 @@ class RibasimLumpingNetwork(BaseModel):
             bridge_q_df=bridge_q_df, 
             pump_q_df=pump_q_df,
         )
-        # for table_name, table in tables.items():
-        #     display(table_name)
-        #     display(table)
 
         # generate ribasim model
         ribasim_model = generate_ribasim_model(

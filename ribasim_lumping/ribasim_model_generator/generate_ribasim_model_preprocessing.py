@@ -320,7 +320,7 @@ def generate_surface_storage_for_basins(node_a, node_v, nodes):
     return basin_a, basin_v
 
 def generate_h_relation_basins_nodes(nodes, node_h_basin, basin_h):
-    nodes_basin = nodes[["node_no", "basin_node_id"]]
+    nodes_basin = nodes[["node_no", "basin_node_id", "geometry"]]
     node_h_basin_stacked = node_h_basin.stack()
     node_h_basin_stacked.name = "node_no_h"
     node_h_results = node_h_basin_stacked.reset_index().merge(
@@ -331,10 +331,14 @@ def generate_h_relation_basins_nodes(nodes, node_h_basin, basin_h):
     basin_h_stacked = basin_h.stack()
     basin_h_stacked.name = "basin_h"
     basin_h_results = basin_h_stacked.reset_index()
-    basin_node_h_relation = node_h_results.merge(
-        basin_h_results, 
-        how='left', 
-        on=("set", "condition", "basin_node_id")
+    basin_node_h_relation = gpd.GeoDataFrame(
+        node_h_results.merge(
+            basin_h_results, 
+            how='left', 
+            on=("set", "condition", "basin_node_id")
+        ),
+        geometry="geometry",
+        crs=nodes.crs
     )
     return basin_node_h_relation
 
