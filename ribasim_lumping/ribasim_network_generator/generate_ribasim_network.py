@@ -23,7 +23,7 @@ def create_graph_based_on_nodes_edges(
         for i, edge in edges.iterrows():
             graph.add_edge(edge.from_node, edge.to_node)
     print(
-        f" - create network graph from nodes ({len(nodes)}) and edges ({len(edges)}x)"
+        f" - create network graph from nodes ({len(nodes)}x) and edges ({len(edges)}x)"
     )
     return graph
 
@@ -177,11 +177,11 @@ def check_if_split_node_is_used(
     split_nodes["object_type"] = split_nodes["object_type"].fillna("manual")
     split_nodes["split_type"] = split_nodes["object_type"]
     split_nodes.loc[~split_nodes.status, "split_type"] = "no_split"
-    print(f" - check whether each split location results in a split ({len(split_nodes.loc[~split_nodes['status']])} not used)")
+    print(f" - check whether each split location results in a split ({len(split_nodes.loc[~split_nodes['status']])}x not used)")
     return split_nodes
 
 
-def create_basin_areas_based_on_drainage_areas(
+def create_basin_areas_based_on_drainage_unit_areas(
         edges: gpd.GeoDataFrame, 
         areas: gpd.GeoDataFrame,
         laterals: gpd.GeoDataFrame = None,
@@ -190,7 +190,6 @@ def create_basin_areas_based_on_drainage_areas(
     find areas with spatial join on edges. add subgraph code to areas
     and combine all areas with certain subgraph code into one basin
     """
-    edges, areas, laterals = edges.copy(), areas.copy(), laterals.copy()  # copy to make sure gdf variable is not linked
 
     if areas is None:
         return None, None
@@ -199,6 +198,8 @@ def create_basin_areas_based_on_drainage_areas(
     if edges is None:
         areas["basin"] = -1
         return areas, None
+    else:
+        edges = edges.copy()
 
     def get_area_code_for_lateral(laterals, areas):
         selected_areas = areas[[laterals.find(area) != -1 for area in areas["area_code"]]]
@@ -215,6 +216,7 @@ def create_basin_areas_based_on_drainage_areas(
             return basins[0]
 
     if laterals is not None:
+        laterals = laterals.copy()
         laterals["area_code_included"] = laterals["id"].apply(lambda x: get_area_code_for_lateral(x, areas))
         laterals_join = laterals.sjoin(
             gpd.GeoDataFrame(edges['basin'], geometry=edges['geometry'].buffer(1)),
@@ -225,21 +227,41 @@ def create_basin_areas_based_on_drainage_areas(
         areas["basin"] = areas.apply(lambda x: get_basin_code_from_lateral(x["area_code"], laterals_join), axis = 1)
         basin_areas = areas.dissolve(by="basin").explode().reset_index().drop(columns=["level_1"])
     else:
-        edges_sel = edges[edges["basin"] != -1].copy()
-        edges_sel["edge_length"] = edges_sel.geometry.length
+        edges_sel = edges.loc[edges["basin"] != -1].copy()
+        # fix invalid area geometries
         areas["area"] = areas.index
         areas_orig = areas.copy()
-        areas = areas.sjoin(edges_sel[["basin", "edge_length", "geometry"]])
+        areas.geometry = areas.make_valid()
+        # due to make_valid() GeometryCollections can be generated. Only take the (multi)polygon from those collections
+        areas.geometry = [[g for g in gs.geoms if (isinstance(g, Polygon) or isinstance(g, MultiPolygon))][0] 
+                        if hasattr(gs, 'geoms') 
+                        else gs
+                        for gs in areas.geometry]
+        # spatial join edges to areas that intersect
+        areas = areas.sjoin(edges_sel[["basin", "geometry"]])
+        # we want to select the edge which is the longest within an area to ultimately select 
+        # the right basin code
+        edge_lengths = [gpd.GeoDataFrame(edges_sel.loc[ir].to_frame().T, geometry='geometry').clip(a).geometry.length.values[0] 
+                        for a, ir in zip(areas.geometry, areas['index_right'])]
+        areas['edge_length'] = edge_lengths
         areas = areas.drop(columns=["index_right"]).reset_index(drop=True)
-        areas = areas.groupby(by=["area", "basin"], as_index=False).agg({"edge_length": "sum"})
-        areas = (areas.sort_values(by=["area", "edge_length"], ascending=[True, False])
-                 .drop_duplicates(subset=["area"], keep="first"))
-        areas = (areas[["area", "basin", "edge_length"]]
-                 .sort_values(by="area")
-                 .merge(areas_orig, how="outer", left_on="area", right_on="area"))
-        areas["basin"] = areas["basin"].fillna(-1).astype(int)
+        areas = areas.groupby(by=["area", "basin"], as_index=False).agg(
+            {"edge_length": "sum"}
+        )
+        # this sorts first such that max edge length is first item and in drop_duplicates that first item will be kept
+        # effectively method to get areas with basin code based on max edge length within area
+        areas = areas.sort_values(
+            by=["area", "edge_length"], ascending=[True, False]
+        ).drop_duplicates(subset=["area"], keep="first")
+        # insert area geometries back into gdf
+        areas = (
+            areas[["area", "basin", "edge_length"]]
+            .sort_values(by="area")
+            .merge(areas_orig, how="outer", left_on="area", right_on="area")
+        )
         areas = gpd.GeoDataFrame(areas, geometry="geometry", crs=edges.crs)
         areas = areas.sort_values(by="area")
+        areas.geometry = areas.make_valid()  # dissolve can fail because of incorrect geoms. fix those first
         basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=["area"])
         basin_areas["basin"] = basin_areas["basin"].astype(int)
         basin_areas["area_ha"] = basin_areas.geometry.area / 10000.0
@@ -282,7 +304,7 @@ def create_basins_based_on_subgraphs_and_nodes(
         by=["basin", "centrality"], ascending=[True, False]
     )
     basins = tmp.groupby(by="basin").first().reset_index().set_crs(nodes.crs)
-    print(f" - create final locations Ribasim-Basins ({len(basins)})")
+    print(f" - create final locations Ribasim-Basins ({len(basins)}x)")
     return basins
 
 
@@ -801,13 +823,13 @@ def generate_ribasim_network_using_split_nodes(
         nodes=nodes
     )
     if use_laterals_for_basin_area:
-        areas, basin_areas = create_basin_areas_based_on_drainage_areas(
+        areas, basin_areas = create_basin_areas_based_on_drainage_unit_areas(
             edges=edges, 
             areas=areas,
             laterals=laterals
         )
     else:
-        areas, basin_areas = create_basin_areas_based_on_drainage_areas(
+        areas, basin_areas = create_basin_areas_based_on_drainage_unit_areas(
             edges=edges, 
             areas=areas
         )

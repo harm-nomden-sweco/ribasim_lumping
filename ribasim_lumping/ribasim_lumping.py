@@ -4,7 +4,7 @@ import sys
 from contextlib import closing
 from pathlib import Path
 from sqlite3 import connect
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Tuple
 
 import geopandas as gpd
 import matplotlib
@@ -14,13 +14,16 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import xugrid as xu
+import contextily as cx
 from pydantic import BaseModel
 from shapely.geometry import Point
+
 from .utils.general_functions import (
     read_geom_file, 
     snap_to_network, 
     split_edges_by_split_nodes,
-    log_and_remove_duplicate_geoms
+    log_and_remove_duplicate_geoms,
+    assign_unassigned_areas_to_basin_areas,
 )
 from .dhydro.read_dhydro_simulations import add_dhydro_basis_network, add_dhydro_simulation_data
 from .hydamo.read_hydamo_network import add_hydamo_basis_network
@@ -31,7 +34,7 @@ from .ribasim_model_generator.generate_ribasim_model import generate_ribasim_mod
 from .ribasim_model_generator.generate_ribasim_model_preprocessing import preprocessing_ribasim_model_tables
 from .ribasim_model_generator.generate_ribasim_model_tables import generate_ribasim_model_tables
 from .ribasim_model_results.ribasim_results import read_ribasim_model_results
-import contextily as cx
+
 import ribasim
 
 
@@ -44,7 +47,8 @@ class RibasimLumpingNetwork(BaseModel):
     dhydro_basis_dir: Path = None,
     dhydro_results_dir: Path = None,
     areas_gdf:gpd.GeoDataFrame = None
-    discharge_areas_gdf: gpd.GeoDataFrame = None
+    drainage_areas_gdf: gpd.GeoDataFrame = None
+    supply_areas_gdf: gpd.GeoDataFrame = None
     his_data: xu.UgridDataset = None
     map_data: xu.UgridDataset = None
     network_data: xr.Dataset = None
@@ -121,23 +125,23 @@ class RibasimLumpingNetwork(BaseModel):
         arbitrary_types_allowed = True
 
     def add_basis_network(
-        self, 
-        source_type: str,
-        dhydro_model_dir: Path = '.', 
-        dhydro_simulation_name: str = 'default',
-        dhydro_volume_tool_bat_file: Path = '.', 
-        dhydro_volume_tool_force: bool = False,
-        dhydro_volume_tool_increment: float = 0.1,
-        hydamo_network_file: Path = 'network.gpkg',
-        hydamo_network_gpkg_layer: str = 'network',
-        ribasim_input_boundary_file: Path = 'boundary.gpkg',
-        ribasim_input_boundary_gpkg_layer: str = 'boundary',
-        ribasim_input_split_nodes_file: Path = 'split_nodes.gpkg',
-        ribasim_input_split_nodes_gpkg_layer: Path = 'split_nodes',
-        hydamo_split_nodes_bufdist: float = 10.0,
-        hydamo_boundary_bufdist: float = 10.0,
-        hydamo_write_results_to_gpkg: bool = False
-
+            self, 
+            source_type: str,
+            dhydro_model_dir: Path = '.', 
+            dhydro_simulation_name: str = 'default',
+            dhydro_volume_tool_bat_file: Path = '.', 
+            dhydro_volume_tool_force: bool = False,
+            dhydro_volume_tool_increment: float = 0.1,
+            hydamo_network_file: Path = 'network.gpkg',
+            hydamo_network_gpkg_layer: str = 'network',
+            ribasim_input_boundary_file: Path = 'boundary.gpkg',
+            ribasim_input_boundary_gpkg_layer: str = 'boundary',
+            ribasim_input_split_nodes_file: Path = 'split_nodes.gpkg',
+            ribasim_input_split_nodes_gpkg_layer: Path = 'split_nodes',
+            hydamo_split_nodes_bufdist: float = 10.0,
+            hydamo_boundary_bufdist: float = 10.0,
+            hydamo_write_results_to_gpkg: bool = False
+        ) -> Tuple[gpd.GeoDataFrame]:
         """
         Add (detailed) base network which will used to derive Ribasim network. Source type can either be "dhydro" or
         "hydamo". 
@@ -292,17 +296,17 @@ class RibasimLumpingNetwork(BaseModel):
     def add_areas_from_file(
             self, 
             areas_file_path: Path, 
-            areas_id_column: str, 
+            areas_code_column: str = None, 
             layer_name: str = None, 
             crs: int = 28992
         ):
         """
-        Add areas (e.g. "afwateringseenheden") from file. In case of geopackage, provide layer_name.
+        Add discharge unit areas (e.g. "afwateringseenheden") from file. In case of geopackage, provide layer_name.
         Overwrites previously defined areas
 
         Args:
             areas_file_path (Path):     Path to file containing areas geometries
-            areas_id_column (str):      (optional) Id column for areas. If not provided, first column will be used for id
+            areas_code_column (str):    (optional) Id column for areas. If not provided, first column will be used for id
             layer_name (str):           Layer name in geopackage. Needed when file is a geopackage
             crs (int):                  (optional) CRS EPSG code. Default 28992 (RD New) 
         """
@@ -312,9 +316,56 @@ class RibasimLumpingNetwork(BaseModel):
             layer_name=layer_name, 
             crs=crs
         )
-        areas_id_column = areas_id_column if areas_id_column is not None else list(areas_gdf.columns)[0]
-        self.areas_gdf = areas_gdf[[areas_id_column, "geometry"]]
-        print(f" - areas ({len(areas_gdf)}x)")
+        areas_code_column = areas_code_column if areas_code_column is not None else list(areas_gdf.columns)[0]
+        self.areas_gdf = areas_gdf[[areas_code_column, "geometry"]]
+        self.areas_gdf.rename(columns={areas_code_column: 'area_code'}, inplace=True)
+        print(f" - areas ({len(self.areas_gdf)}x)")
+    
+    def add_drainage_areas_from_file(
+            self, 
+            drainage_areas_file_path: Path,
+            layer_name: str = None, 
+            crs: int = 28992
+        ):
+        """
+        Add drainage areas (e.g. "afvoergebieden") from file. In case of geopackage, provide layer_name.
+        Overwrites previously defined drainage areas
+
+        Args:
+            drainage_areas_file_path (Path):    Path to file containing supply areas geometries
+            layer_name (str):                   Layer name in geopackage. Needed when file is a geopackage
+            crs (int):                          (optional) CRS EPSG code. Default 28992 (RD New) 
+        """
+        print('Reading drainage areas from file...')
+        self.drainage_areas_gdf = read_geom_file(
+            filepath=drainage_areas_file_path, 
+            layer_name=layer_name, 
+            crs=crs
+        )
+        print(f" - drainage areas ({len(self.drainage_areas_gdf)}x)")
+
+    def add_supply_areas_from_file(
+            self, 
+            supply_areas_file_path: Path,
+            layer_name: str = None, 
+            crs: int = 28992
+        ):
+        """
+        Add supply areas (e.g. "afvoergebieden") from file. In case of geopackage, provide layer_name.
+        Overwrites previously defined supply areas
+
+        Args:
+            supply_areas_file_path (Path):      Path to file containing supply areas geometries
+            layer_name (str):                   Layer name in geopackage. Needed when file is a geopackage
+            crs (int):                          (optional) CRS EPSG code. Default 28992 (RD New) 
+        """
+        print('Reading supply areas from file...')
+        self.supply_areas_gdf = read_geom_file(
+            filepath=supply_areas_file_path, 
+            layer_name=layer_name, 
+            crs=crs
+        )
+        print(f" - supply areas ({len(self.supply_areas_gdf)}x)")
     
     def add_boundaries_from_file(
             self, 
@@ -592,6 +643,14 @@ class RibasimLumpingNetwork(BaseModel):
         self.network_graph = results['network_graph']
         self.basin_connections_gdf = results['basin_connections']
         self.boundary_connections_gdf = results['boundary_connections']
+
+        # assign areas to basin areas which have no edge within it so it is not assigned to any basin area
+        self.basin_areas_gdf, self.areas_gdf = assign_unassigned_areas_to_basin_areas(
+            self.areas_gdf,
+            self.basin_areas_gdf, 
+            self.drainage_areas_gdf
+        )
+
         # Export to geopackage
         self.export_to_geopackage(simulation_code=simulation_code)
         return results

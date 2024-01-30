@@ -691,3 +691,106 @@ def split_line_in_multiple(line: LineString, distances_along_line: Union[List[Un
                 lines.append(ls[0])
                 new_line = ls[1]
     return lines
+
+
+def assign_unassigned_areas_to_basin_areas(
+        areas: gpd.GeoDataFrame,
+        basin_areas: gpd.GeoDataFrame, 
+        drainage_areas: gpd.GeoDataFrame = None,
+    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """
+    Assign unassigned areas to basin areas based on neighbouring basin areas within the same drainage area if possible.
+    Drainage areas are optional to include.  
+    
+    Parameters
+    ----------
+    areas : gpd.GeoDataFrame
+        Areas
+    basin_areas : gpd.GeoDataFrame
+        Basin areas
+    drainage_areas : gpd.GeoDataFrame
+        Drainage areas. Optional
+
+    Returns
+    -------
+    Tuple of basin areas where unassigned areas are assigned to basin areas and areas geodataframe with updated basin codes
+    """
+    
+    areas, basin_areas, drainage_areas = areas.copy(), basin_areas.copy(), drainage_areas.copy()
+
+    print("Assign unassigned areas to basin areas based on neighbouring basin areas within the same drainage area if possible")
+    _areas = areas.loc[areas['basin'].isna()]
+    nr_unassigned_areas = len(_areas)
+    print(f" - {nr_unassigned_areas}x unassigned areas")
+    if drainage_areas is None:
+        print(" - DEBUG: drainage areas not supplied. assigning process will only be based on areas and basin areas")
+    
+    while nr_unassigned_areas != 0:
+        nr_unassigned_areas_prev = nr_unassigned_areas
+
+        # get neighbouring basin areas of areas
+        area_to_basin = {i: basin_areas.loc[_areas.loc[i, 'geometry'].buffer(1).intersects(basin_areas.geometry.values), 'basin'].values
+                         for i in _areas.index}
+        
+        if drainage_areas is not None:
+            # get drainage area of which area is part of. in case multiple, use the one with largest overlap
+            area_to_drain = {i: drainage_areas.loc[_areas.loc[i, 'geometry'].intersects(drainage_areas.geometry)].index.values
+                             for i in _areas.index}
+            area_to_drain = {k: v[0] if len(v) <= 1 
+                             else v[np.argmax([drainage_areas.loc[i, 'geometry'].intersection(_areas.loc[k, 'geometry']).area 
+                                               for i in v])]
+                             for k, v in area_to_drain.items() if len(v) > 0}
+            
+            # get drainage area of which basin area is part of. in case multiple, use the one with largest overlap
+            basin_to_drain = {i: drainage_areas.loc[basin_areas.loc[basin_areas['basin'] == i, 'geometry'].intersects(drainage_areas.geometry)].index.values
+                              for i in basin_areas['basin']}
+            basin_to_drain = {k: v[0] if len(v) <= 1 
+                              else v[np.argmax([drainage_areas.loc[i, 'geometry'].intersection(basin_areas.loc[basin_areas['basin'] == k, 'geometry']).area 
+                                               for i in v])]
+                              for k, v in basin_to_drain.items() if len(v) > 0}
+        else:
+            # in case no drainage areas supplied
+            area_to_drain = dict()
+            basin_to_drain = dict()
+
+        # assign areas to basin areas
+        for k, v in area_to_basin.items():
+            # areas that touch 1 basin area within an (optional) drainage area will get assigned to that basin area
+            if len(v) == 1:
+                basin_sel = v[0]
+            # areas that touch multiple basin areas. check which overlapping polygon circumferences is the largest
+            elif len(v) > 1:
+                lengths = [areas.loc[k, 'geometry'].intersection(basin_areas.loc[basin_areas['basin'] == vv, 'geometry']).length.values[0] for vv in v]
+                basin_sel = v[np.argmax(lengths)]
+            # don't do assign if no basin area is touching area
+            else:
+                pass
+
+            # in this case no drainage areas are supplied or area is not within any drainage area so just assign area to basin area
+            if (k not in area_to_drain.keys()) or (basin_sel not in basin_to_drain.keys()):
+                areas.loc[k, 'basin'] = basin_sel
+            # in this case drainage areas are supplied so we check if area and basin area intended to be assigned are both within same drainage area
+            else:
+                if area_to_drain[k] == basin_to_drain[basin_sel]:
+                    areas.loc[k, 'basin'] = basin_sel
+
+        # update basin areas geometries
+        areas.geometry = areas.make_valid()  # dissolve can fail because of incorrect geoms. fix those first
+        basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=["area"])
+        basin_areas["basin"] = basin_areas["basin"].astype(int)
+
+        # update number of unassigned areas
+        _areas = areas.loc[areas['basin'].isna()]
+        nr_unassigned_areas = len(_areas)
+        
+        # to stop while loop (because no new areas will be assigned anymore) but still unassigned areas remain
+        if nr_unassigned_areas == nr_unassigned_areas_prev:
+            nr_unassigned_areas = 0
+            print(" - not all unassigned areas could be assigned automatically ({nr_unassigned_areas_prev}x remaining). Please inspect manually")
+    
+    # update some other basin areas columns
+    basin_areas["area_ha"] = basin_areas.geometry.area / 10000.0
+    basin_areas["color_no"] = basin_areas.index % 50
+    print(f" - updated basin areas and areas")
+
+    return basin_areas, areas

@@ -465,7 +465,7 @@ def create_graph_based_on_nodes_edges(
         for i, edge in edges.iterrows():
             graph.add_edge(edge.from_node, edge.to_node)
     print(
-        f" - create network graph from nodes ({len(nodes)}) and edges ({len(edges)}x)"
+        f" - create network graph from nodes ({len(nodes)}x) and edges ({len(edges)}x)"
     )
     return graph
 
