@@ -2,19 +2,23 @@
 Read network locations from D-Hydro simulation
 Harm Nomden (Sweco)
 """
-from pathlib import Path
-import subprocess
 import configparser
-import pandas as pd
-import geopandas as gpd
 import datetime
-from shapely.geometry import Point, LineString
+import subprocess
+from pathlib import Path
+
+import geopandas as gpd
+import hydrolib.core.dflowfm as hcdfm
+import numpy as np
+import pandas as pd
 import xarray as xr
 import xugrid as xu
-import hydrolib.core.dflowfm as hcdfm
-from ..utils.general_functions import find_file_in_directory, \
-    find_directory_in_directory, find_nearest_nodes, get_points_on_linestrings_based_on_distances, \
-        replace_string_in_file, read_ini_file_with_similar_sections, find_nearest_edges_no
+from shapely.geometry import LineString, Point
+
+from ..utils.general_functions import (
+    find_directory_in_directory, find_file_in_directory, find_nearest_edges_no,
+    find_nearest_nodes, get_points_on_linestrings_based_on_distances,
+    read_ini_file_with_similar_sections, replace_string_in_file)
 
 
 def get_dhydro_files(simulation_path: Path):
@@ -117,7 +121,7 @@ def get_dhydro_nodes_from_network_data(network_data, crs):
     return nodes_gdf
 
 
-def get_dhydro_edges_from_network_data(network_data, nodes_gdf, crs):
+def get_dhydro_edges_from_network_data(network_data, nodes_gdf, branches_gdf, crs):
     """Get DHydro edges"""
     edges_df = pd.DataFrame({
         "branch_id": network_data._mesh1d.mesh1d_edge_branch_id,
@@ -127,6 +131,8 @@ def get_dhydro_edges_from_network_data(network_data, nodes_gdf, crs):
         "from_node": network_data._mesh1d.mesh1d_edge_nodes[:, 0],
         "to_node": network_data._mesh1d.mesh1d_edge_nodes[:, 1],
     })
+    edges_df["branch_id"] = edges_df["branch_id"].map(branches_gdf["branch_id"].to_dict())
+
     edges_df["geometry"] = ""
     edges_gdf = edges_df.merge(
         nodes_gdf,
@@ -176,46 +182,63 @@ def get_dhydro_structures_locations(
     )
     structures_gdf = structures_gdf.rename(columns={"type": "object_type"})
     structures_gdf = find_nearest_edges_no(
+        gdf1=structures_gdf,
+        gdf2=branches_gdf.set_index("branch_id").sort_index(),
+        new_column = "branch_id"
+    )
+    structures_gdf = find_nearest_edges_no(
         gdf1=structures_gdf, 
-        gdf2=edges_gdf.set_index('edge_no').sort_index(),
-        new_column='edge_no',
+        gdf2=edges_gdf.set_index("edge_no").sort_index(),
+        new_column="edge_no",
+        subset="branch_id",
     )
     object_types = list(structures_gdf.object_type.unique())
     for object_type in object_types:
         len_objects = len(structures_gdf[structures_gdf.object_type==object_type])
         print(f" {object_type} ({len_objects}x),", end="", flush=True)
+    structures_gdf["node_no"] = -1
     return structures_gdf
 
 
-def check_number_of_pumps_at_pumping_station(pumps_gdf: gpd.GeoDataFrame):
+def check_number_of_pumps_at_pumping_station(pumps_gdf: gpd.GeoDataFrame, set_name: str):
     """Check number of pumps at pumping station and combine them into one representative pump
     Input:  Geodataframe with pumps with multiple per location
     Output: Geodataframe with one pump per location. 
             Total capacity (sum), Max start level, Min stop level"""
-    pumps_gdf = pumps_gdf.groupby(pumps_gdf.geometry.to_wkt(), as_index=False).agg(dict(
-        structure_id='first',
-        branch_id='first', 
-        geometry='first',
-        comments='first', 
-        object_type='first',
-        chainage='first',
-        orientation='first',
-        controlside='first',
-        numstages='first',
-        capacity='sum',
-        startlevelsuctionside='max',
-        stoplevelsuctionside='min',
-        startleveldeliveryside='min',
-        stopleveldeliveryside='max',
-        numreductionlevels='first',
-        head='first',
-        reductionfactor='first',
-        edge_no='first'
-    )).reset_index(drop=True).pipe(gpd.GeoDataFrame)
+    crs = pumps_gdf.crs
+    pumps_gdf = pumps_gdf.groupby(
+        pumps_gdf.geometry.to_wkt(), 
+        as_index=False
+    ).agg({
+        ('general', 'structure_id'): 'first',
+        ('general', 'branch_id'): 'first', 
+        ('general', 'object_type'): 'first',
+        ('general', 'chainage'): 'first',
+        ('general', 'edge_no'): 'first',
+        ('general', 'node_no'): 'first',
+        ('structure', 'comments'): 'first', 
+        ('structure', 'orientation'): 'first',
+        ('structure', 'controlside'): 'first',
+        ('structure', 'numstages'): 'first',
+        ('structure', 'capacity'): 'sum',
+        ('structure', 'numreductionlevels'): 'first',
+        ('structure', 'head'): 'first',
+        ('structure', 'reductionfactor'): 'first',
+        (set_name, 'startlevelsuctionside'): 'max',
+        (set_name, 'stoplevelsuctionside'): 'min',
+        (set_name, 'startleveldeliveryside'): 'min',
+        (set_name, 'stopleveldeliveryside'): 'max',
+        ('geometry', ''): 'first',
+    }).reset_index(drop=True)
+    pumps_gdf = gpd.GeoDataFrame(
+        pumps_gdf.drop(columns=("geometry", '')),
+        geometry=pumps_gdf["geometry"],
+        crs=crs
+    )
     return pumps_gdf
 
 
-def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame):
+def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame, set_name: str):
     """Get all DHydro structures dataframes"""
     list_structure_types = list(structures_gdf['object_type'].unique())
     structures_gdf_dict = {}
@@ -224,29 +247,62 @@ def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame):
         if structure_type == "compound":
             continue
         # get structure type data
-        structure_gdf = structures_gdf.loc[structures_gdf["object_type"] == structure_type]
+        structure_gdf = structures_gdf.loc[structures_gdf["object_type"] == structure_type].dropna(how='all', axis=1)
+        
         # comments are sometimes a separate object instead of string
         if 'comments' in structure_gdf.columns:
             structure_gdf.loc[:, 'comments'] = structure_gdf.loc[:, 'comments'].astype(str)
-        # in case of pumps check if multiple pumps in one pumping station
-        # if structure_type == "pump" and ~structure_gdf.empty:
-        #     old_no_pumps = len(structure_gdf)
-        #     structure_gdf = check_number_of_pumps_at_pumping_station(structure_gdf)
-        #     if old_no_pumps > len(structure_gdf):
-        #         print(f" pumps ({old_no_pumps}x->{len(structure_gdf)}x)", end="", flush=True)
-        #     else:
-        #         print(f" pumps ({len(structure_gdf)}x)", end="", flush=True)
-        # else:
-        #     print(f" {structure_type}s ({len(structure_gdf)}x)", end="", flush=True)
+        
+        # create multi-index to separate general values from set-specific values.
+        header_0 = ["structure_id", "branch_id", "object_type", "chainage", "edge_no", "node_no"]
+        headers_2 = {
+            'weir': ["crestlevel"],
+            'uniweir': ["crestlevel", "yvalues", "zvalues"],
+            'universalWeir': ["crestlevel", "yvalues", "zvalues"],
+            'orifice': ["crestlevel", "gateloweredgelevel", "uselimitflowpos", "limitflowpos", "uselimitflowneg", "limitflowneg"],
+            'pump': ["startlevelsuctionside", "stoplevelsuctionside", "startleveldeliveryside", "stopleveldeliveryside"],
+        }
+        if structure_type in headers_2.keys():
+            header_2 = headers_2[structure_type]
+        else:
+            header_2 = []
+        if structure_type not in ['pump', 'culvert']:
+            header_2 += ["upstream_upperlimit", "upstream_setpoint", "upstream_lowerlimit", 
+                         "downstream_upperlimit", "downstream_setpoint", "downstream_lowerlimit"]
+            for h in header_2:
+                if h not in structure_gdf.columns:
+                    structure_gdf[h] = np.nan
+        header_1 = [c for c in structure_gdf.columns if c not in header_0 + header_2 + ['geometry']]
 
-        structure_gdf = structure_gdf.dropna(axis=1, how='all')
-        for col in structure_gdf.columns:
-            if any(isinstance(val, list) for val in structure_gdf[col]):
-                structure_gdf[col] = structure_gdf[col].apply(
-                    lambda x: f"[{','.join([str(i) for i in x])}]" 
-                    if isinstance(x, list) else ""
-                )
-        structures_gdf_dict[structure_type] = structure_gdf
+        structure_gdf = gpd.GeoDataFrame(
+            pd.concat([
+                structure_gdf[header_0], 
+                structure_gdf[header_1],
+                structure_gdf[header_2]
+            ], keys=['general', 'structure', set_name], axis=1),
+            geometry=structure_gdf['geometry'],
+            crs=structure_gdf.crs
+        )
+
+        if structure_type == "culvert":
+            structure_gdf[("structure", "crestlevel")] = structure_gdf[[("structure", "leftlevel"), ("structure", "rightlevel")]].max(axis=1)
+
+        # in case of pumps: 
+        # - check if multiple pumps in one pumping station
+        if structure_type == "pump":
+            # check for multiple pumps if gdf is filled
+            if ~structure_gdf.empty:
+                old_no_pumps = len(structure_gdf)
+                structure_gdf = check_number_of_pumps_at_pumping_station(structure_gdf, set_name)
+                if old_no_pumps > len(structure_gdf):
+                    print(f" pumps ({old_no_pumps}x->{len(structure_gdf)}x)", end="", flush=True)
+                else:
+                    print(f" pumps ({len(structure_gdf)}x)", end="", flush=True)
+                # display(structure_gdf.head())
+            else:
+                print(f" {structure_type}s ({len(structure_gdf)}x)", end="", flush=True)
+
+        structures_gdf_dict[structure_type] = structure_gdf.sort_values(by=("general", "structure_id")).reset_index(drop=True)
     print(f" ")
     return structures_gdf_dict
 
@@ -262,9 +318,8 @@ def get_dhydro_external_forcing_locations(
     
     boundaries_gdf = read_ini_file_with_similar_sections(external_forcing_file, "Boundary")
     boundaries_gdf = boundaries_gdf.rename({"nodeid": "network_node_id"}, axis=1)
-    boundaries_gdf["network_node_id"] = boundaries_gdf["network_node_id"].astype(str)
-    network_nodes_gdf["network_node_id"] = network_nodes_gdf["network_node_id"].astype(str)
-
+    boundaries_gdf["network_node_id"] = boundaries_gdf["network_node_id"].str.strip("b \'\"")
+    network_nodes_gdf["network_node_id"] = network_nodes_gdf["network_node_id"].str.strip("b \'\"")
     boundaries_gdf = network_nodes_gdf[["network_node_id", "geometry"]].merge(
         boundaries_gdf, 
         how="right", 
@@ -314,6 +369,8 @@ def get_dhydro_forcing_data(
     laterals_data = None
     laterals_forcing_files = laterals_gdf['discharge'].unique()
     for laterals_forcing_file in laterals_forcing_files:
+        if laterals_forcing_file == "realtime":
+            continue
         laterals_forcing_file_path = Path(mdu_input_dir, laterals_forcing_file)
         forcingmodel_object = hcdfm.ForcingModel(laterals_forcing_file_path)
         if laterals_data is None:
@@ -363,7 +420,7 @@ def get_dhydro_volume_based_on_basis_simulations(
 ):
     mdu_file = find_file_in_directory(mdu_input_dir, ".mdu")
     volume_nc_file = find_file_in_directory(mdu_input_dir, "PerGridpoint_volume.nc")
-    if volume_nc_file == "" or volume_tool_force:
+    if volume_nc_file is None or volume_tool_force:
         subprocess.Popen(
             f'"{volume_tool_bat_file}" --mdufile "{mdu_file.name}" --increment {str(volume_tool_increment)} --outputfile volume.nc --output "All"', cwd=str(mdu_file.parent)
         )
@@ -377,6 +434,7 @@ def get_dhydro_volume_based_on_basis_simulations(
 
 def get_dhydro_data_from_simulation(
     simulation_path: Path, 
+    set_name: str,
     volume_tool_bat_file: Path, 
     volume_tool_force: bool = False,
     volume_tool_increment: float = 0.1,
@@ -402,14 +460,15 @@ def get_dhydro_data_from_simulation(
     network_nodes_gdf = get_dhydro_network_nodes_from_network_nc(network_nc, crs)
     branches_gdf = get_dhydro_branches_from_network_data(network_data, crs)
     nodes_gdf = get_dhydro_nodes_from_network_data(network_data, crs)
-    edges_gdf = get_dhydro_edges_from_network_data(network_data, nodes_gdf, crs)
+    edges_gdf = get_dhydro_edges_from_network_data(network_data, nodes_gdf, branches_gdf, crs)
 
     structures_gdf = get_dhydro_structures_locations(
         structures_file=files['structure_file'], 
         branches_gdf=branches_gdf, 
         edges_gdf=edges_gdf
     )
-    structures_dict = split_dhydro_structures(structures_gdf)
+    # display(structures_gdf.head())
+    structures_dict = split_dhydro_structures(structures_gdf, set_name)
 
     boundaries_gdf, laterals_gdf = get_dhydro_external_forcing_locations(
         external_forcing_file=files['external_forcing_file'], 

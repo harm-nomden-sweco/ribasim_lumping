@@ -67,7 +67,6 @@ def split_graph_based_on_split_nodes(
     split_nodes_edges["new_node_pos"] = split_nodes_edges.geometry.apply(
         lambda x: (x.x, x.y)
     )
-
     split_nodes_edges["upstream_node_no"] = [e[0] for e in split_edges]
     split_nodes_edges["downstream_node_no"] = [e[1] for e in split_edges]
 
@@ -184,63 +183,70 @@ def check_if_split_node_is_used(
 
 def create_basin_areas_based_on_drainage_areas(
         edges: gpd.GeoDataFrame, 
-        areas: gpd.GeoDataFrame
+        areas: gpd.GeoDataFrame,
+        laterals: gpd.GeoDataFrame = None,
     ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     """
     find areas with spatial join on edges. add subgraph code to areas
     and combine all areas with certain subgraph code into one basin
     """
+    edges, areas, laterals = edges.copy(), areas.copy(), laterals.copy()  # copy to make sure gdf variable is not linked
 
-    edges, areas = edges.copy(), areas.copy()  # copy to make sure gdf variable is not linked
     if areas is None:
         return None, None
     else:
-        areas = areas[["geometry"]].copy()
+        areas = areas[["area_code", "geometry"]].copy()
     if edges is None:
-        areas["basin"] = np.nan
+        areas["basin"] = -1
         return areas, None
-    edges_sel = edges.loc[edges["basin"] != -1].copy()
-    # fix invalid area geometries
-    areas["area"] = areas.index
-    areas_orig = areas.copy()
-    areas.geometry = areas.make_valid()
-    # due to make_valid() GeometryCollections can be generated. Only take the (multi)polygon from those collections
-    areas.geometry = [[g for g in gs.geoms if (isinstance(g, Polygon) or isinstance(g, MultiPolygon))][0] 
-                      if hasattr(gs, 'geoms') 
-                      else gs
-                      for gs in areas.geometry]
-    # spatial join edges to areas that intersect
-    areas = areas.sjoin(edges_sel[["basin", "geometry"]])
-    # we want to select the edge which is the longest within an area to ultimately select 
-    # the right basin code
-    edge_lengths = [gpd.GeoDataFrame(edges_sel.loc[ir].to_frame().T, geometry='geometry').clip(a).geometry.length.values[0] 
-                    for a, ir in zip(areas.geometry, areas['index_right'])]
-    areas['edge_length'] = edge_lengths
-    areas = areas.drop(columns=["index_right"]).reset_index(drop=True)
-    areas = areas.groupby(by=["area", "basin"], as_index=False).agg(
-        {"edge_length": "sum"}
-    )
-    # this sorts first such that max edge length is first item and in drop_duplicates that first item will be kept
-    # effectively method to get areas with basin code based on max edge length within area
-    areas = areas.sort_values(
-        by=["area", "edge_length"], ascending=[True, False]
-    ).drop_duplicates(subset=["area"], keep="first")
-    # insert area geometries back into gdf
-    areas = (
-        areas[["area", "basin", "edge_length"]]
-        .sort_values(by="area")
-        .merge(areas_orig, how="outer", left_on="area", right_on="area")
-    )
-    areas = gpd.GeoDataFrame(areas, geometry="geometry", crs=edges.crs)
-    areas = areas.sort_values(by="area")
-    areas.geometry = areas.make_valid()  # dissolve can fail because of incorrect geoms. fix those first
-    basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=["area"])
-    basin_areas["basin"] = basin_areas["basin"].astype(int)
-    basin_areas["area_ha"] = basin_areas.geometry.area / 10000.0
-    basin_areas["color_no"] = basin_areas.index % 25
-    print(
-        f" - define for each Ribasim-Basin the related basin area ({len(basin_areas)}x)"
-    )
+
+    def get_area_code_for_lateral(laterals, areas):
+        selected_areas = areas[[laterals.find(area) != -1 for area in areas["area_code"]]]
+        if len(selected_areas)==0:
+            return None
+        else:
+            return selected_areas["area_code"].values[0]
+
+    def get_basin_code_from_lateral(area_code, laterals_join):
+        basins = list(laterals_join["basin"][(laterals_join["area_code_included"]==area_code)&(laterals_join["basin"].isna()==False)].values)
+        if len(basins) == 0:
+            return -1
+        else:
+            return basins[0]
+
+    if laterals is not None:
+        laterals["area_code_included"] = laterals["id"].apply(lambda x: get_area_code_for_lateral(x, areas))
+        laterals_join = laterals.sjoin(
+            gpd.GeoDataFrame(edges['basin'], geometry=edges['geometry'].buffer(1)),
+            op="intersects",
+            how="left",
+        ).drop(columns=["index_right"])
+        laterals_join["basin"] = laterals_join["basin"].fillna(-1).astype(int)
+        areas["basin"] = areas.apply(lambda x: get_basin_code_from_lateral(x["area_code"], laterals_join), axis = 1)
+        basin_areas = areas.dissolve(by="basin").explode().reset_index().drop(columns=["level_1"])
+    else:
+        edges_sel = edges[edges["basin"] != -1].copy()
+        edges_sel["edge_length"] = edges_sel.geometry.length
+        areas["area"] = areas.index
+        areas_orig = areas.copy()
+        areas = areas.sjoin(edges_sel[["basin", "edge_length", "geometry"]])
+        areas = areas.drop(columns=["index_right"]).reset_index(drop=True)
+        areas = areas.groupby(by=["area", "basin"], as_index=False).agg({"edge_length": "sum"})
+        areas = (areas.sort_values(by=["area", "edge_length"], ascending=[True, False])
+                 .drop_duplicates(subset=["area"], keep="first"))
+        areas = (areas[["area", "basin", "edge_length"]]
+                 .sort_values(by="area")
+                 .merge(areas_orig, how="outer", left_on="area", right_on="area"))
+        areas["basin"] = areas["basin"].fillna(-1).astype(int)
+        areas = gpd.GeoDataFrame(areas, geometry="geometry", crs=edges.crs)
+        areas = areas.sort_values(by="area")
+        basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=["area"])
+        basin_areas["basin"] = basin_areas["basin"].astype(int)
+        basin_areas["area_ha"] = basin_areas.geometry.area / 10000.0
+        basin_areas["color_no"] = basin_areas.index % 50
+        print(
+            f" - define for each Ribasim-Basin the related basin area ({len(basin_areas)}x)"
+        )
     return areas, basin_areas
 
 
@@ -281,7 +287,10 @@ def create_basins_based_on_subgraphs_and_nodes(
 
 
 def check_if_nodes_edges_within_basin_areas(nodes, edges, basin_areas):
-    """ "check whether nodes assigned to a basin are also within the polygon assigned to that basin"""
+    """
+    check whether nodes assigned to a basin are also within the polygon assigned to that basin
+    """
+    
     edges, nodes, basin_areas = edges.copy(), nodes.copy(), basin_areas.copy()  # copy to make sure gdf variable is not linked
     if basin_areas is None:
         nodes["basin_area"] = -1
@@ -309,13 +318,16 @@ def check_if_nodes_edges_within_basin_areas(nodes, edges, basin_areas):
 
 
 def create_basin_connections(
-    split_nodes: gpd.GeoDataFrame,
-    edges: gpd.GeoDataFrame,
-    nodes: gpd.GeoDataFrame,
-    basins: gpd.GeoDataFrame,
-    crs: int = 28992,
-) -> gpd.GeoDataFrame:
-    """create basin connections"""
+        split_nodes: gpd.GeoDataFrame,
+        edges: gpd.GeoDataFrame,
+        nodes: gpd.GeoDataFrame,
+        basins: gpd.GeoDataFrame,
+        crs: int = 28992,
+    ) -> gpd.GeoDataFrame:
+    """
+    create basin connections
+    """
+    
     conn = split_nodes.rename(columns={"geometry": "geom_split_node"})
     # check if split_node is used (split_type)
  
@@ -325,12 +337,12 @@ def create_basin_connections(
     # (2) splitnodes that are original d-hydro nodes
 
     # (1) splitnodes that are located on an edge
-    conn_struct = conn.loc[conn["edge_no"] != -1].drop(columns=['node_no'])
+    conn_struct = conn.loc[conn["edge_no"] != -1].drop(["node_no", "from_node", "to_node"], axis=1, errors='ignore')
     # merge with edge to find us and ds nodes
     conn_struct = conn_struct.merge(
         edges[["from_node", "to_node", "edge_no"]],
         left_on="edge_no",
-        right_on="edge_no",
+        right_on="edge_no"
     )
     # TODO: check for each edge the maximum absolute flow direction, in case of negative, reverse from_node/to_node
     # merge with node to find us and ds basin
@@ -338,7 +350,8 @@ def create_basin_connections(
         nodes[["node_no", "basin"]],
         left_on="from_node",
         right_on="node_no",
-    ).drop(columns=["from_node", "to_node", "node_no", "edge_no"])
+    )
+    conn_struct_us = conn_struct_us.drop(columns=["from_node", "to_node", "node_no", "edge_no"])
     conn_struct_ds = conn_struct.merge(
         nodes[["node_no", "basin"]],
         left_on="to_node", 
@@ -347,7 +360,7 @@ def create_basin_connections(
 
     # (2) splitnodes that are original d-hydro nodes
     # merge splitnodes add connected edges
-    conn_nodes = conn.loc[conn["node_no"] != -1].drop(columns=["edge_no"])
+    conn_nodes = conn.loc[conn["node_no"] != -1].drop(["edge_no", "from_node", "to_node"], axis=1, errors='ignore')
 
     conn_nodes_ds = conn_nodes.merge(
         edges[["basin", "from_node", "to_node", "edge_no"]],
@@ -553,12 +566,13 @@ def create_boundary_connections(
     additional_split_nodes['object_type'] = "boundary_connection"
     additional_split_nodes['split_type'] = "boundary_connection"
     additional_split_nodes['status'] = True
+    additional_split_nodes['split_node'] = -1
+
     split_nodes = gpd.GeoDataFrame(
         pd.concat([split_nodes, additional_split_nodes]),
         geometry='geometry', 
         crs=split_nodes.crs
     )
-
     split_nodes = split_nodes.reset_index(drop=True)
     split_nodes['split_node'] = split_nodes.index + 1
     
@@ -572,6 +586,9 @@ def create_boundary_connections(
         how='left',
         on='split_node_id'
     ).sort_values(['boundary', 'basin']).reset_index(drop=True)
+    
+    boundaries_conn['split_node'] = boundaries_conn['split_node'].fillna(-1).astype(int)
+
     return boundaries_conn, split_nodes
 
 
@@ -583,14 +600,15 @@ def regenerate_node_ids(
         boundary_connections: gpd.GeoDataFrame,
         basin_areas: gpd.GeoDataFrame,
         nodes: gpd.GeoDataFrame,
-        edges: gpd.GeoDataFrame
+        edges: gpd.GeoDataFrame,
+        areas: gpd.GeoDataFrame,
     ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
     """
     Regenerate ribasim node-id for nodes and edges
     """
 
     boundaries, split_nodes, basins, basin_connections = boundaries.copy(), split_nodes.copy(), basins.copy(), basin_connections.copy()
-    boundary_connections, basin_areas, nodes, edges = boundary_connections.copy(), basin_areas.copy(), nodes.copy(), edges.copy()
+    boundary_connections, basin_areas, nodes, edges, areas = boundary_connections.copy(), basin_areas.copy(), nodes.copy(), edges.copy(), areas.copy()
 
     print(f" - regenerate node-ids Ribasim-Nodes and Ribasim-Edges")
     # boundaries
@@ -637,14 +655,16 @@ def regenerate_node_ids(
         lambda x: x["basin_node_id"] if x["connection"].startswith("basin") else (
             x["boundary_node_id"] if x["connection"].startswith("boundary") else x["split_node_node_id"]
         ), axis=1
-    )
+    ).astype(int)
     boundary_connections["to_node_id"] = boundary_connections.apply(
         lambda x: x["basin_node_id"] if x["connection"].endswith("basin") else (
             x["boundary_node_id"] if x["connection"].endswith("boundary") else x["split_node_node_id"]
         ), axis=1
-    )
+    ).astype(int)
 
     basin_areas = basin_areas.merge(basins[["basin", "basin_node_id"]], on="basin")
+
+    areas["basin_node_id"] = areas["basin"].apply(lambda x: x + len_split_nodes + len_boundaries if x>0 else -1)
 
     mapping_basins_node_id = basins.set_index("basin")["basin_node_id"].to_dict()
     nodes["basin_node_id"] = nodes["basin"].replace(mapping_basins_node_id)
@@ -674,8 +694,9 @@ def regenerate_node_ids(
     basin_areas = basin_areas.loc[~basin_areas.duplicated()].copy()
     nodes = nodes.loc[~nodes.duplicated()].copy()
     edges = edges.loc[~edges.duplicated()].copy()
+    areas = areas.loc[~areas.duplicated()].copy()
 
-    return boundaries, split_nodes, basins, basin_areas, nodes, edges
+    return boundaries, split_nodes, basins, basin_areas, nodes, edges, areas
 
 
 def generate_ribasim_types_for_all_split_nodes(
@@ -740,12 +761,13 @@ def generate_ribasim_network_using_split_nodes(
         split_nodes: gpd.GeoDataFrame,
         areas: gpd.GeoDataFrame,
         boundaries: gpd.GeoDataFrame,
+        laterals: gpd.GeoDataFrame,
+        use_laterals_for_basin_area: bool,
         split_node_type_conversion: Dict, 
         split_node_id_conversion: Dict,
         crs: int = 28992,
     ) -> Dict:
-    """
-    create basins (nodes) and basin_areas (large polygons) and connections (edges)
+    """create basins (nodes) and basin_areas (large polygons) and connections (edges)
     based on nodes, edges, split_nodes and areas (discharge units).
     This function calls all other functions
     """
@@ -778,10 +800,17 @@ def generate_ribasim_network_using_split_nodes(
         graph=network_graph, 
         nodes=nodes
     )
-    areas, basin_areas = create_basin_areas_based_on_drainage_areas(
-        edges=edges, 
-        areas=areas
-    )
+    if use_laterals_for_basin_area:
+        areas, basin_areas = create_basin_areas_based_on_drainage_areas(
+            edges=edges, 
+            areas=areas,
+            laterals=laterals
+        )
+    else:
+        areas, basin_areas = create_basin_areas_based_on_drainage_areas(
+            edges=edges, 
+            areas=areas
+        )
     nodes, edges = check_if_nodes_edges_within_basin_areas(
         nodes=nodes, 
         edges=edges, 
@@ -801,7 +830,7 @@ def generate_ribasim_network_using_split_nodes(
         nodes=nodes,
         edges=edges
     )
-    boundaries, split_nodes, basins, basin_areas, nodes, edges = regenerate_node_ids(
+    boundaries, split_nodes, basins, basin_areas, nodes, edges, areas = regenerate_node_ids(
         boundaries=boundaries,
         split_nodes=split_nodes,
         basins=basins,
@@ -809,7 +838,8 @@ def generate_ribasim_network_using_split_nodes(
         boundary_connections=boundary_connections,
         basin_areas=basin_areas,
         nodes=nodes,
-        edges=edges
+        edges=edges,
+        areas=areas
     )
     boundaries, split_nodes, basins = generate_ribasim_types_for_all_split_nodes(
         boundaries=boundaries, 
@@ -818,7 +848,6 @@ def generate_ribasim_network_using_split_nodes(
         split_node_type_conversion=split_node_type_conversion, 
         split_node_id_conversion=split_node_id_conversion
     )
-
     return dict(
         basin_areas=basin_areas,
         basins=basins,

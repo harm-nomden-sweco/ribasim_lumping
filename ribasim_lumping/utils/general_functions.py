@@ -1,14 +1,15 @@
-import os
-from pathlib import Path
 import configparser
 from typing import Dict, List, Tuple, Union
+import os
 from collections import OrderedDict
+from pathlib import Path
+
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 from pydantic import BaseModel
-from shapely.ops import nearest_points, snap
 from shapely.geometry import LineString, Point
+from shapely.ops import nearest_points, snap
 
 
 def replace_string_in_file(file_path, string, new_string):
@@ -21,8 +22,9 @@ def replace_string_in_file(file_path, string, new_string):
 
 def find_file_in_directory(directory, file_name, start_end='end') -> Path:
     """Find path of file in directory"""
-    selected_file = ""
+    selected_file = None
     for root, dirs, files in os.walk(directory):
+        # print(root, dirs, files)
         for file in files:
             if start_end == 'end':
                 if file.endswith(file_name):
@@ -30,6 +32,9 @@ def find_file_in_directory(directory, file_name, start_end='end') -> Path:
             elif start_end == 'start':
                 if file.startswith(file_name):
                     selected_file = os.path.join(root, file)
+    # print(selected_file)
+    if selected_file is None:
+        return None
     return Path(selected_file)
 
 
@@ -113,10 +118,24 @@ def find_nearest_nodes(
 def find_nearest_edges_no(
     gdf1: gpd.GeoDataFrame,
     gdf2: gpd.GeoDataFrame,
-    new_column: str
+    new_column: str,
+    subset: str = None
 ) -> gpd.GeoDataFrame: 
+    if subset is not None and subset in gdf1.columns:
+        gdf1_total = None
+        subsets = gdf1[subset].unique()
+        for i, sub in enumerate(subsets):
+            gdf1_sub = gdf1[gdf1[subset]==sub].copy()
+            gdf2_sub = gdf2[gdf2[subset]==sub].copy()
+            ind_gdf1, ind_gdf2  = gdf2_sub['geometry'].sindex.nearest(gdf1_sub['geometry'], return_all=False)
+            gdf1_sub[new_column] = gdf2_sub.index[ind_gdf2]
+            if gdf1_total is None:
+                gdf1_total = gdf1_sub.copy()
+            else:
+                gdf1_total = pd.concat([gdf1_total, gdf1_sub])
+        return gdf1_total
     ind_gdf1, ind_gdf2  = gdf2['geometry'].sindex.nearest(gdf1['geometry'], return_all=False)
-    gdf1[new_column] = ind_gdf2
+    gdf1[new_column] = gdf2.index[ind_gdf2]
     return gdf1
 
 

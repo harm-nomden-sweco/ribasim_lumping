@@ -28,7 +28,7 @@ def get_split_nodes_based_on_type(
         False
     ]
     split_nodes_columns = [
-        "node_no", "edge_no", "split_node_id", "geometry", "object_type", "split_type"
+        "split_node_id", "geometry", "object_type", "split_type", "edge_no", "node_no"
     ]
     split_nodes = gpd.GeoDataFrame(
         columns=split_nodes_columns,
@@ -37,8 +37,10 @@ def get_split_nodes_based_on_type(
     )
     for gdf_include, gdf in zip(list_objects, list_gdfs):
         if gdf_include and gdf is not None:
-            gdf = gdf.rename({"structure_id": "split_node_id"}, axis=1)
-            split_nodes = pd.concat([split_nodes, gdf])
+            gdf = gdf.rename({"structure_id": "split_node_id"}, axis=1, level=1)
+            split_nodes = pd.concat(
+                [split_nodes, gdf['general'].merge(gdf['geometry'], left_index=True, right_index=True)]
+            )
     return split_nodes[split_nodes_columns]
 
 
@@ -61,6 +63,7 @@ def add_split_nodes_based_on_selection(
     by choosing which structures to use as splitnodes locations
     and including or excluding specific nodes as splitnode
     returns splitnodes"""
+    network_edges = list_gdfs[-1]
     # get split_nodes based on type
     split_nodes_structures = get_split_nodes_based_on_type(
         stations=stations,
@@ -99,28 +102,28 @@ def add_split_nodes_based_on_selection(
     if edges or len(edge_ids_to_include) > 1:
         additional_split_nodes = None
         if edges:
-            additional_split_nodes = self.edges_gdf.copy()
+            additional_split_nodes = network_edges.copy()
             if len(edge_ids_to_exclude):
                 additional_split_nodes = additional_split_nodes[
                     ~additional_split_nodes.edge_no.isin(edge_ids_to_exclude)
                 ]
         elif len(edge_ids_to_include):
-            additional_split_nodes = self.edges_gdf[
-                self.edges_gdf.edge_no.isin(edge_ids_to_include)
-            ]
+            additional_split_nodes = network_edges[
+                network_edges.edge_no.isin(edge_ids_to_include)
+            ][["edge_no", "geometry"]]
         if additional_split_nodes is not None:
             additional_split_nodes.geometry = additional_split_nodes.geometry.apply(
                 lambda g: g.centroid
             )
-            additional_split_nodes["object_type"] = "edge"
+            additional_split_nodes["object_type"] = "open water"
             additional_split_nodes["node_no"] = -1
-            additional_split_nodes = additional_split_nodes.rename(columns={
-                "mesh1d_edge_x": "projection_x",
-                "mesh1d_edge_y": "projection_y",
-            })
-            additional_split_nodes = additional_split_nodes.drop(
-                ["start_node_no", "end_node_no", "basin"], axis=1, errors="ignore"
-            )
+            # additional_split_nodes = additional_split_nodes.rename(columns={
+            #     "mesh1d_edge_x": "projection_x",
+            #     "mesh1d_edge_y": "projection_y",
+            # })
+            # additional_split_nodes = additional_split_nodes.drop(
+            #     ["start_node_no", "end_node_no", "basin"], axis=1, errors="ignore"
+            # )
             split_nodes = pd.concat([split_nodes, additional_split_nodes])
             split_nodes = split_nodes.drop_duplicates(subset="edge_no", keep="first")
 
