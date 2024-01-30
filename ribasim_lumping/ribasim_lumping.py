@@ -92,6 +92,7 @@ class RibasimLumpingNetwork(BaseModel):
     basins_h_df: pd.DataFrame = None
     basins_a_df: pd.DataFrame = None
     basins_v_df: pd.DataFrame = None
+    basins_nodes_h_relation: pd.DataFrame = None
     edge_q_df: pd.DataFrame = None
     weir_q_df: pd.DataFrame = None
     uniweir_q_df: pd.DataFrame = None
@@ -485,26 +486,27 @@ class RibasimLumpingNetwork(BaseModel):
         
         # preprocessing data to input for tables
         basins_outflows, node_h_basin, node_h_node, node_a, node_v, basin_h, basin_a, basin_v, \
-            node_bedlevel, node_targetlevel, orig_bedlevel, edge_q_df, weir_q_df, uniweir_q_df, \
-                orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df = \
-                    preprocessing_ribasim_model_tables(
-                        dummy_model=dummy_model,
-                        map_data=self.map_data, 
-                        his_data=self.his_data,
-                        volume_data=self.volume_data, 
-                        nodes=self.nodes_gdf, 
-                        weirs=self.weirs_gdf,
-                        uniweirs=self.uniweirs_gdf,
-                        pumps=self.pumps_gdf, 
-                        culverts=self.culverts_gdf,
-                        orifices=self.orifices_gdf,
-                        basins=self.basins_gdf, 
-                        split_nodes=self.split_nodes, 
-                        basin_connections=self.basin_connections_gdf, 
-                        boundary_connections=self.boundary_connections_gdf,
-                        interpolation_lines=interpolation_lines,
-                        set_names=self.basis_set_names
-                    )
+            node_bedlevel, node_targetlevel, orig_bedlevel, basins_nodes_h_relation, \
+                edge_q_df, weir_q_df, uniweir_q_df, \
+                    orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df = \
+                        preprocessing_ribasim_model_tables(
+                            dummy_model=dummy_model,
+                            map_data=self.map_data, 
+                            his_data=self.his_data,
+                            volume_data=self.volume_data, 
+                            nodes=self.nodes_gdf, 
+                            weirs=self.weirs_gdf,
+                            uniweirs=self.uniweirs_gdf,
+                            pumps=self.pumps_gdf, 
+                            culverts=self.culverts_gdf,
+                            orifices=self.orifices_gdf,
+                            basins=self.basins_gdf, 
+                            split_nodes=self.split_nodes, 
+                            basin_connections=self.basin_connections_gdf, 
+                            boundary_connections=self.boundary_connections_gdf,
+                            interpolation_lines=interpolation_lines,
+                            set_names=self.basis_set_names
+                        )
         
         self.nodes_gdf["bedlevel"] = orig_bedlevel
         self.nodes_h_df = node_h_node
@@ -514,6 +516,7 @@ class RibasimLumpingNetwork(BaseModel):
         self.basins_h_df = basin_h
         self.basins_a_df = basin_a
         self.basins_v_df = basin_v
+        self.basins_nodes_h_relation = basins_nodes_h_relation
         self.edge_q_df = edge_q_df
         self.weir_q_df = weir_q_df
         self.uniweir_q_df = uniweir_q_df
@@ -540,6 +543,7 @@ class RibasimLumpingNetwork(BaseModel):
                             if i_ts == self.initial_waterlevels_timestep:
                                 break
                             ind_initial_h += 1
+                        break
                 basin_h_initial = basin_h.loc[set_name].iloc[ind_initial_h + 2 + interpolation_lines*2]
             elif self.method_initial_waterlevels == 3:
                 raise ValueError('method initial waterlevels = 3 not yet implemented')
@@ -554,6 +558,7 @@ class RibasimLumpingNetwork(BaseModel):
             basins=self.basins_gdf, 
             basin_areas=self.basin_areas_gdf,
             areas=self.areas_gdf,
+            basins_nodes_h_relation=self.basins_nodes_h_relation,
             laterals=self.laterals_gdf,
             laterals_data=self.laterals_data,
             boundaries=self.boundaries_gdf, 
@@ -646,6 +651,7 @@ class RibasimLumpingNetwork(BaseModel):
             basin_h=self.basins_h_df,
             basin_a=self.basins_a_df,
             basin_v=self.basins_v_df,
+            basins_nodes_h_relation=self.basins_nodes_h_relation
         )
         gdfs_none = dict()
         gdfs = dict()
@@ -653,10 +659,11 @@ class RibasimLumpingNetwork(BaseModel):
             if gdf is None:
                 gdfs_none[gdf_name] = gdf
             elif "geometry" not in gdf.columns:
-                column = gdf.columns.name
-                gdf = gdf.stack()
-                gdf.name = "data"
-                gdf = gdf.reset_index().reset_index().sort_values(by=[column, "index"]).reset_index(drop=True).drop(columns="index")
+                if gdf.columns.name is not None:
+                    column = gdf.columns.name
+                    gdf = gdf.stack()
+                    gdf.name = "data"
+                    gdf = gdf.reset_index().reset_index().sort_values(by=[column, "index"]).reset_index(drop=True).drop(columns="index")
                 gdf["geometry"] = Point(0,0)
                 gdf = gpd.GeoDataFrame(gdf, geometry="geometry", crs=28992)
                 gdfs[gdf_name] = gdf
