@@ -319,6 +319,25 @@ def generate_surface_storage_for_basins(node_a, node_v, nodes):
     basin_v.index.names = ["set", "condition"]
     return basin_a, basin_v
 
+def generate_h_relation_basins_nodes(nodes, node_h_basin, basin_h):
+    nodes_basin = nodes[["node_no", "basin_node_id"]]
+    node_h_basin_stacked = node_h_basin.stack()
+    node_h_basin_stacked.name = "node_no_h"
+    node_h_results = node_h_basin_stacked.reset_index().merge(
+        nodes_basin, 
+        how='left', 
+        on="node_no"
+    )
+    basin_h_stacked = basin_h.stack()
+    basin_h_stacked.name = "basin_h"
+    basin_h_results = basin_h_stacked.reset_index()
+    basin_node_h_relation = node_h_results.merge(
+        basin_h_results, 
+        how='left', 
+        on=("set", "condition", "basin_node_id")
+    )
+    return basin_node_h_relation
+
 
 def preprocessing_ribasim_model_tables(
     dummy_model, map_data, his_data, volume_data, nodes, weirs, uniweirs, pumps, culverts, orifices, basins, split_nodes, 
@@ -361,7 +380,12 @@ def preprocessing_ribasim_model_tables(
     basin_a, basin_v = generate_surface_storage_for_basins(node_a, node_v, nodes)
     edge_q_df = get_discharges_table_from_simulations(map_data)
     weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df = get_discharges_table_structures_from_simulations(his_data)
+    basins_nodes_h_relation = generate_h_relation_basins_nodes(
+        nodes=nodes,
+        node_h_basin=node_h_basin,
+        basin_h=basin_h
+    )
 
     return basins_outflows, node_h_basin, node_h_node, node_a, node_v, basin_h, basin_a, basin_v, \
-        node_bedlevel, node_targetlevel, orig_bedlevel, edge_q_df, \
+        node_bedlevel, node_targetlevel, orig_bedlevel, basins_nodes_h_relation, edge_q_df, \
             weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df
