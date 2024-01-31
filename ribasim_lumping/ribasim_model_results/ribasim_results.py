@@ -30,6 +30,7 @@ class RibasimModelResults(BaseModel):
     control: Optional[pd.DataFrame] = None
     flow: Optional[pd.DataFrame] = None
     basin_flow: Optional[pd.DataFrame] = None
+    subgrid: Optional[pd.DataFrame] = None
     basin_areas: gpd.GeoDataFrame = None
 
     class Config:
@@ -48,6 +49,7 @@ class RibasimBasinResults(BaseModel):
     outflow_edge: Optional[pd.DataFrame] = None
     inflow: Optional[pd.DataFrame] = None
     outflow: Optional[pd.DataFrame] = None
+    subgrid: Optional[pd.DataFrame] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -56,7 +58,9 @@ class RibasimBasinResults(BaseModel):
 def read_arrow_file(simulation_dir: Path, file_name: str, results_dir: str = "results"):
     """read arrow files from folder"""
     arrow_file_path = Path(simulation_dir, results_dir, f"{file_name}.arrow")
-    return pd.read_feather(arrow_file_path)
+    if arrow_file_path.exists():
+        return pd.read_feather(arrow_file_path)
+    return None
 
 
 def get_inflow_outflow_edge_data(ribasim_model: ribasim.Model):
@@ -111,25 +115,33 @@ def read_ribasim_model_results(simulation_path: Path):
     if not simulation_path.exists():
         raise ValueError(f" x simulation_path {str(simulation_path)} does not exist")
     ribasim_model = ribasim.Model.read(Path(simulation_path, "ribasim.toml"))
-    basin = (read_arrow_file(simulation_path, "basin")
-             .set_index(["node_id", "time"])
-             .sort_index())
-    basin = basin[~basin.index.duplicated(keep='first')]
-    basin = basin.unstack(0).interpolate().unstack(-1).unstack(0)
-    control = (read_arrow_file(simulation_path, "control")
-               .set_index(["control_node_id", "time"])
-               .sort_index())
-    flow = read_arrow_file(simulation_path, "flow")
-    basin_flow = flow[flow["edge_id"].isna()]
-    basin_flow = (
-        basin_flow
-        .drop(columns=["edge_id", "from_node_id"])
-        .rename(columns={"to_node_id": "node_id"})
-        .set_index(["node_id", "time"]).sort_index()
-    )
-    flow = flow[~flow["edge_id"].isna()]
-    flow["edge_id"] = flow["edge_id"].astype(int)
 
+    basin = read_arrow_file(simulation_path, "basin")
+    if basin is not None:
+        basin = basin.set_index(["node_id", "time"]).sort_index()
+        basin = basin[~basin.index.duplicated(keep='first')]
+        basin = basin.unstack(0).interpolate().unstack(-1).unstack(0)
+
+    control = read_arrow_file(simulation_path, "control")
+    if control is not None:
+        control = control.set_index(["control_node_id", "time"]).sort_index()
+    
+    flow = read_arrow_file(simulation_path, "flow")
+    if flow is None:
+        basin_flow = None
+    else:
+        basin_flow = flow[flow["edge_id"].isna()]
+        basin_flow = (
+            basin_flow
+            .drop(columns=["edge_id", "from_node_id"])
+            .rename(columns={"to_node_id": "node_id"})
+            .set_index(["node_id", "time"]).sort_index()
+        )
+        flow = flow[~flow["edge_id"].isna()]
+        flow["edge_id"] = flow["edge_id"].astype(int)
+
+    subgrid = read_arrow_file(simulation_path, "subgrid_levels")
+    
     flow_edge = get_inflow_outflow_edge_data(ribasim_model=ribasim_model)
     if Path(simulation_path, "ribasim_network.gpkg").exists():
         basin_areas = gpd.read_file(Path(simulation_path, "ribasim_network.gpkg"), layer="basin_areas")
@@ -154,6 +166,7 @@ def read_ribasim_model_results(simulation_path: Path):
         basin=basin, 
         control=control, 
         flow=flow, 
+        subgrid=subgrid,
         basin_flow=basin_flow,
         basin_areas=basin_areas,
     )
