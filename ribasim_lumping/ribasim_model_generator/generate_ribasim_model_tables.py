@@ -28,8 +28,7 @@ def generate_basin_static_table(basin_h, basin_a, basins, decimals=3):
     basin_profile = basin_profile.reset_index(drop=True)
     basin_profile = basin_profile[
         (basin_profile["level"].diff(1) > 0.0001) | 
-        (basin_profile["level"].diff(1).isna()) | 
-        (basin_profile["level"].diff(1) < 0.0)
+        (basin_profile["level"].diff(1).isna())
     ].reset_index(drop=True)
     return basin_profile
 
@@ -167,23 +166,23 @@ def generate_tabulated_rating_curve(
         discharges = discharge_df[split_node_name]
 
         curve = pd.concat([water_levels_basin, discharges.replace(-999.0, np.nan)], axis=1)
-        curve.columns = ["level", "discharge"]
-        curve.iloc[0]["discharge"] = 0.0
-        curve.iloc[1]["discharge"] = 0.0
-        curve.iloc[2]["discharge"] = 0.0
-        curve.iloc[3]["discharge"] = 0.0
+        curve.columns = ["level", "flow_rate"]
+        curve.iloc[0]["flow_rate"] = 0.0
+        curve.iloc[1]["flow_rate"] = 0.0
+        curve.iloc[2]["flow_rate"] = 0.0
+        curve.iloc[3]["flow_rate"] = 0.0
         curve["node_id"] = trc["split_node_node_id"]
         curve = curve.interpolate().reset_index(drop=True)
-        curve.loc[curve["discharge"] < 0.0, "discharge"] = 0.0
+        curve.loc[curve["flow_rate"] < 0.0, "flow_rate"] = 0.0
 
-        if curve["discharge"].max() < 0.01:
+        if curve["flow_rate"].max() < 0.01:
             print(f" x basin_node_id {basin_node_id}: no discharge over split_node ({split_type}): {trc.split_node_id} in D-HYDRO simulation")
 
             def weir_formula(crestlevel, crestwidth, waterlevel):
                 return 2.0/3.0 * max(0.0, waterlevel - crestlevel)**(3.0/2.0) * (2*9.81)**0.5 * crestwidth
 
             curve.loc[3:, "level"] = [i*0.05 + trc.crestlevel for i in range(0, len(curve)-3)]
-            curve["discharge"] = curve.apply(lambda x: weir_formula(trc.crestlevel, trc.crestwidth, x["level"]), axis=1).fillna(0.0)
+            curve["flow_rate"] = curve.apply(lambda x: weir_formula(trc.crestlevel, trc.crestwidth, x["level"]), axis=1).fillna(0.0)
 
         curves = pd.concat([curves, curve])
     return curves.drop_duplicates().reset_index(drop=True)
@@ -248,6 +247,46 @@ def generate_boundary_static_data(boundaries, boundaries_static_data):
     return boundary_data
 
 
+def generate_basin_state(basin_h_initial, basin_profile, basin_h, set_name):
+    if basin_h_initial is None:
+        basin_state = basin_h.loc[(set_name, "targetlevel")].rename("level").reset_index().rename(columns={"basin_node_id": "node_id"})
+        print('basin-state: generated based on targetlevel')
+    else:                            
+        basin_state = basin_h_initial.rename("level").reset_index().rename(columns={"basin_node_id": "node_id"})
+        print('basin-state: generated as defined')
+    # check whether initial water level is higher than bedlevel, if not: use bedlevel
+    bedlevel = basin_profile.groupby("node_id").min()[["level"]].rename(columns={"level": "bedlevel"})
+    state = basin_state.set_index("node_id")[["level"]]
+    state = bedlevel.merge(state, how='left', left_index=True, right_index=True).max(axis=1)
+    state.name = "level"
+    basin_state = basin_state.drop(columns=["level"]).merge(state, how='left', left_on="node_id", right_index=True)
+    return basin_state
+
+
+def generate_basin_subgrid(basins_nodes_h_relation):
+    basin_subgrid = basins_nodes_h_relation[["node_no", "basin_node_id", "basin_h", "node_no_h"]]
+    basin_subgrid["x"] = basins_nodes_h_relation.geometry.x
+    basin_subgrid["y"] = basins_nodes_h_relation.geometry.y
+    basin_subgrid = basin_subgrid.rename(columns={
+        "node_no": "subgrid_id", 
+        "basin_node_id": "node_id", 
+        "basin_h": "basin_level", 
+        "node_no_h": "subgrid_level"
+    })
+    basin_subgrid = basin_subgrid.round(5).sort_values(by=["subgrid_id", "node_id", "basin_level"])
+    basin_subgrid["basin_level_diff"] = basin_subgrid["basin_level"].diff()
+    basin_subgrid["subgrid_level_diff"] = basin_subgrid["subgrid_level"].diff()
+
+    for node_id in basin_subgrid.node_id.unique():
+        basin_subgrid.loc[(basin_subgrid['node_id'] == node_id).idxmax(), ['basin_level_diff', 'subgrid_level_diff']] = np.nan
+
+    basin_subgrid = basin_subgrid[
+        ((basin_subgrid["basin_level"].diff(1) > 0.0001) | (basin_subgrid["basin_level"].isna())) & 
+        ((basin_subgrid["subgrid_level"].diff(1) > 0.0001) | (basin_subgrid["subgrid_level"].isna()))
+    ].reset_index(drop=True)
+    return basin_subgrid.drop(columns=["basin_level_diff", "subgrid_level_diff"])
+
+
 def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, basin_areas, basins_nodes_h_relation,
     laterals, laterals_data, boundaries, boundaries_data, split_nodes, basins_outflows, set_name, 
     method_boundaries, boundaries_timeseries_data, 
@@ -256,35 +295,17 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, 
 
     # create tables for BASINS
     tables = dict()
-    tables['basin_profile'] = generate_basin_static_table(basin_h, basin_a, basins, decimals=3)
     print('basin-profile: generated')
+    tables['basin_profile'] = generate_basin_static_table(basin_h, basin_a, basins, decimals=3)
 
     # create tables for INITIAL STATE
-    if basin_h_initial is None:
-        tables['basin_state'] = (basin_h.loc[(set_name, "targetlevel")]
-                                 .rename("level")
-                                 .reset_index()
-                                 .rename(columns={"basin_node_id": "node_id"}))
-        print('basin-state: generated based on targetlevel')
-    else:                            
-        tables['basin_state'] = (basin_h_initial
-                                 .rename("level")
-                                 .reset_index()
-                                 .rename(columns={"basin_node_id": "node_id"}))
-        print('basin-state: generated as defined')
+    print('basin-state: generated')
+    tables["basin_state"] = generate_basin_state(basin_h_initial, tables["basin_profile"], basin_h, set_name)
 
     # create subgrid
     if basins_nodes_h_relation is not None:
         print("subgrid: based on water level relation basin and nodes")
-        tables['basin_subgrid'] = basins_nodes_h_relation[["node_no", "basin_node_id", "basin_h", "node_no_h"]]
-        tables['basin_subgrid']["x"] = basins_nodes_h_relation.geometry.x
-        tables['basin_subgrid']["y"] = basins_nodes_h_relation.geometry.y
-        tables['basin_subgrid'] = tables['basin_subgrid'].rename(columns={
-            "node_no": "subgrid_id", 
-            "basin_node_id": "node_id", 
-            "basin_h": "basin_level", 
-            "node_no_h": "subgrid_level"
-        })
+        tables['basin_subgrid'] = generate_basin_subgrid(basins_nodes_h_relation)
 
     # create laterals table
     if method_laterals == 1:
@@ -339,8 +360,25 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, 
         )  
         tables['level_boundary_static'] = None
     else:
-        raise ValueError('boundaries not given')
-    
+        # oud
+        level_boundaries = boundaries[boundaries['ribasim_type']=="LevelBoundary"]
+        tables['level_boundary_static'] = pd.DataFrame(
+            data={
+                "node_id": level_boundaries["boundary_node_id"],
+                "level": [7.15] * len(level_boundaries),
+            }
+        )
+        tables['level_boundary_time'] = None
+
+        flow_boundaries = boundaries[boundaries['ribasim_type']=="FlowBoundary"]
+        tables['flow_boundary_static'] = pd.DataFrame(
+            data={
+                "node_id": flow_boundaries["boundary_node_id"],
+                "flow_rate": [0.0] * len(flow_boundaries),
+            }
+        )
+        tables['flow_boundary_time'] = None
+        
     # create tables for PUMPS
     pumps = split_nodes[split_nodes['ribasim_type'] == 'Pump']
     print(f"pumps: generated ({len(pumps)} pumps)")

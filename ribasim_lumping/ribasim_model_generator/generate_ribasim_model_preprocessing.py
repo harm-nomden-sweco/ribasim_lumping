@@ -246,24 +246,24 @@ def generate_node_waterlevels_table(node_h_df, node_bedlevel, node_targetlevel, 
     return node_h
 
 
-def generate_surface_storage_for_nodes(node_h, node_surface_df, node_storage_df, orig_bedlevel, set_names, decimals=3):
-    
-    def translate_waterlevels_to_surface_storage(nodes_h, curve, orig_bedlevel):
-        nodes_x = nodes_h.copy()
-        nodes_h_new = nodes_h.copy()
-        for col in nodes_x.columns:
-            level_correction_bedlevel = orig_bedlevel.bedlevel.loc[col] - 0.01
-            curve.loc[curve.index <= level_correction_bedlevel, col] = 0.0
-            nodes_h_new.loc[nodes_x[col] < level_correction_bedlevel, col] = math.floor(level_correction_bedlevel*10)/10.0
-            interp_func = scipy.interpolate.interp1d(
-                curve.index, 
-                curve[col].to_numpy(), 
-                kind="linear", 
-                fill_value="extrapolate"
-            )
-            nodes_x[col] = np.round(interp_func(nodes_h_new[col].to_numpy()), decimals=decimals)
-        return nodes_x
+def translate_waterlevels_to_surface_storage(nodes_h, curve, orig_bedlevel, decimals=3):
+    nodes_x = nodes_h.copy()
+    nodes_h_new = nodes_h.copy()
+    for col in nodes_x.columns:
+        level_correction_bedlevel = orig_bedlevel.bedlevel.loc[col] - 0.01
+        curve.loc[curve.index <= level_correction_bedlevel, col] = 0.0
+        nodes_h_new.loc[nodes_x[col] < level_correction_bedlevel, col] = math.floor(level_correction_bedlevel*10)/10.0
+        interp_func = scipy.interpolate.interp1d(
+            curve.index, 
+            curve[col].to_numpy(), 
+            kind="linear", 
+            fill_value="extrapolate"
+        )
+        nodes_x[col] = np.round(interp_func(nodes_h_new[col].to_numpy()), decimals=decimals)
+    return nodes_x
 
+
+def generate_surface_storage_for_nodes(node_h, node_surface_df, node_storage_df, orig_bedlevel, set_names, decimals=3):
     node_h_new = pd.DataFrame()
     node_a = pd.DataFrame()
     node_v = pd.DataFrame()
@@ -277,10 +277,10 @@ def generate_surface_storage_for_nodes(node_h, node_surface_df, node_storage_df,
             columns_nan = pd.isnull(node_h_set.loc[ind]).index[pd.isnull(node_h_set.loc[ind])]
             node_h_set.loc[ind, columns_nan] = node_h_set.loc[node_h_set.index[i], columns_nan] + 0.2
         
-        a_set = translate_waterlevels_to_surface_storage(node_h_set, node_surface_df, orig_bedlevel)
+        a_set = translate_waterlevels_to_surface_storage(node_h_set, node_surface_df, orig_bedlevel, decimals=decimals)
         node_a_set = pd.concat([a_set], keys=[set_name], names=["set"])
         node_a = pd.concat([node_a, node_a_set])
-        v_set = translate_waterlevels_to_surface_storage(node_h_set, node_storage_df, orig_bedlevel)
+        v_set = translate_waterlevels_to_surface_storage(node_h_set, node_storage_df, orig_bedlevel, decimals=decimals)
         node_v_set = pd.concat([v_set], keys=[set_name], names=["set"])
         node_v = pd.concat([node_v, node_v_set])
         
@@ -300,7 +300,6 @@ def generate_waterlevels_for_basins(basins, node_h):
 
 def generate_surface_storage_for_basins(node_a, node_v, nodes):
     nodes = nodes[["node_no", "basin_node_id"]]
-
     basin_a = pd.DataFrame()
     basin_v = pd.DataFrame()
 
@@ -318,6 +317,7 @@ def generate_surface_storage_for_basins(node_a, node_v, nodes):
     basin_a.index.names = ["set", "condition"]
     basin_v.index.names = ["set", "condition"]
     return basin_a, basin_v
+
 
 def generate_h_relation_basins_nodes(nodes, node_h_basin, basin_h):
     nodes_basin = nodes[["node_no", "basin_node_id", "geometry"]]
