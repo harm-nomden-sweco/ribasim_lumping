@@ -92,7 +92,7 @@ class RibasimLumpingNetwork(BaseModel):
     basins_h_df: pd.DataFrame = None
     basins_a_df: pd.DataFrame = None
     basins_v_df: pd.DataFrame = None
-    basins_nodes_h_relation: pd.DataFrame = None
+    basins_nodes_h_relation: gpd.GeoDataFrame = None
     edge_q_df: pd.DataFrame = None
     weir_q_df: pd.DataFrame = None
     uniweir_q_df: pd.DataFrame = None
@@ -479,7 +479,8 @@ class RibasimLumpingNetwork(BaseModel):
         saveat: int = None,
         interpolation_lines: int = 5,
         database_gpkg: str = 'database.gpkg',
-        results_dir: str = 'results'
+        results_dir: str = 'results',
+        results_subgrid: bool = False
     ):
         if set_name not in self.basis_set_names:
             raise ValueError(f'set_name {set_name} not in available set_names')
@@ -581,9 +582,6 @@ class RibasimLumpingNetwork(BaseModel):
             bridge_q_df=bridge_q_df, 
             pump_q_df=pump_q_df,
         )
-        # for table_name, table in tables.items():
-        #     display(table_name)
-        #     display(table)
 
         # generate ribasim model
         ribasim_model = generate_ribasim_model(
@@ -605,6 +603,8 @@ class RibasimLumpingNetwork(BaseModel):
         # check for timestep (saveat)
         if saveat is not None:
             ribasim_model.solver = ribasim.Solver(saveat=saveat)
+        if results_subgrid:
+            ribasim_model.results.subgrid = True
 
         ribasim_model.write(Path(self.simulation_path, "ribasim.toml"))
         with open(Path(self.simulation_path, "run_ribasim_model.bat"), 'w') as f:

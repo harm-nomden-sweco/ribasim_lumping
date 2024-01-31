@@ -133,8 +133,8 @@ def generate_ribasim_outlets(outlet_static: gpd.GeoDataFrame):
 def generate_ribasim_tabulatedratingcurves(
     tabulated_rating_curve_static: pd.DataFrame
 ):
-    """generate ribasim tabulated rating using dummyvalues for level and discharge
-    static: node_id, level, discharge"""
+    """generate ribasim tabulated rating using dummyvalues for level and flow_rate
+    static: node_id, level, flow_rate"""
     print("tabulatedratingcurve ", end="", flush=True)
     if tabulated_rating_curve_static is None or tabulated_rating_curve_static.empty:
         print("   x no tabulated rating curve")
