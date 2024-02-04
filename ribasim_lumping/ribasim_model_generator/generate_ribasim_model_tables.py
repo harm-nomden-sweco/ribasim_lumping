@@ -26,12 +26,15 @@ def generate_basin_static_table(basin_h, basin_a, basins, decimals=3):
     basin_profile = basin_profile[basin_profile['level'].notna()]
     basin_profile["area"] = basin_profile["area"].replace(0.0, 0.001)
     basin_profile = basin_profile.reset_index(drop=True)
+    basin_profile["level_diff"] = basin_profile["level"].diff()
+    
+    for node_id in basin_profile.node_id.unique():
+        basin_profile.loc[(basin_profile['node_id'] == node_id).idxmax(), 'level_diff'] = np.nan
+
     basin_profile = basin_profile[
-        (basin_profile["level"].diff(1) > 0.0001) | 
-        (basin_profile["level"].diff(1).isna()) | 
-        (basin_profile["level"].diff(1) < 0.0)
+        (basin_profile["level_diff"].diff(1) > 0.0001) | (basin_profile["level_diff"].isna())
     ].reset_index(drop=True)
-    return basin_profile
+    return basin_profile.drop(columns=["level_diff"])
 
 
 def generate_basin_time_table_laterals(basins, basin_areas, laterals, laterals_data, saveat):
@@ -248,35 +251,70 @@ def generate_boundary_static_data(boundaries, boundaries_static_data):
     return boundary_data
 
 
-def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_areas, areas,
+def generate_basin_state(basin_h_initial, basin_profile, basin_h, set_name):
+    if basin_h_initial is None:
+        basin_state = basin_h.loc[(set_name, "targetlevel")].rename("level").reset_index().rename(columns={"basin_node_id": "node_id"})
+        print('basin-state: generated based on targetlevel')
+    else:                            
+        basin_state = basin_h_initial.rename("level").reset_index().rename(columns={"basin_node_id": "node_id"})
+        print('basin-state: generated as defined')
+    # check whether initial water level is higher than bedlevel, if not: use bedlevel
+    bedlevel = basin_profile.groupby("node_id").min()[["level"]].rename(columns={"level": "bedlevel"})
+    state = basin_state.set_index("node_id")[["level"]]
+    state = bedlevel.merge(state, how='left', left_index=True, right_index=True).max(axis=1)
+    state.name = "level"
+    basin_state = basin_state.drop(columns=["level"]).merge(state, how='left', left_on="node_id", right_index=True)
+    return basin_state
+
+
+def generate_basin_subgrid(basins_nodes_h_relation):
+    basin_subgrid = basins_nodes_h_relation[["node_no", "basin_node_id", "basin_h", "node_no_h"]]
+    basin_subgrid["x"] = basins_nodes_h_relation.geometry.x
+    basin_subgrid["y"] = basins_nodes_h_relation.geometry.y
+    basin_subgrid = basin_subgrid.rename(columns={
+        "node_no": "subgrid_id", 
+        "basin_node_id": "node_id", 
+        "basin_h": "basin_level", 
+        "node_no_h": "subgrid_level"
+    })
+    basin_subgrid = basin_subgrid.round(5).sort_values(by=["subgrid_id", "node_id", "basin_level"])
+    basin_subgrid["basin_level_diff"] = basin_subgrid["basin_level"].diff()
+    basin_subgrid["subgrid_level_diff"] = basin_subgrid["subgrid_level"].diff()
+
+    for node_id in basin_subgrid.node_id.unique():
+        basin_subgrid.loc[(basin_subgrid['node_id'] == node_id).idxmax(), ['basin_level_diff', 'subgrid_level_diff']] = np.nan
+
+    basin_subgrid = basin_subgrid[
+        ((basin_subgrid["basin_level_diff"].diff(1) > 0.0001) | (basin_subgrid["basin_level_diff"].isna())) & 
+        ((basin_subgrid["subgrid_level_diff"].diff(1) > 0.0001) | (basin_subgrid["subgrid_level_diff"].isna()))
+    ].reset_index(drop=True)
+    return basin_subgrid.drop(columns=["basin_level_diff", "subgrid_level_diff"])
+
+
+def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, basin_areas, basins_nodes_h_relation,
     laterals, laterals_data, boundaries, boundaries_data, split_nodes, basins_outflows, set_name, 
     method_boundaries, boundaries_timeseries_data, 
     method_laterals, laterals_areas_data, laterals_drainage_per_ha, basin_h_initial, 
     saveat, edge_q_df, weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df):
 
     # create tables for BASINS
-    print('basin-profile:')
     tables = dict()
+    print('basin-profile: generated')
     tables['basin_profile'] = generate_basin_static_table(basin_h, basin_a, basins, decimals=3)
 
     # create tables for INITIAL STATE
-    print('basin-state:')
-    if basin_h_initial is None:
-        tables['basin_state'] = (basin_h.loc[(set_name, "targetlevel")]
-                                 .rename("level")
-                                 .reset_index()
-                                 .rename(columns={"basin_node_id": "node_id"}))
-    else:                            
-        tables['basin_state'] = (basin_h_initial
-                                 .rename("level")
-                                 .reset_index()
-                                 .rename(columns={"basin_node_id": "node_id"}))
+    print('basin-state: generated')
+    tables["basin_state"] = generate_basin_state(basin_h_initial, tables["basin_profile"], basin_h, set_name)
 
-    print('laterals:')
+    # create subgrid
+    if basins_nodes_h_relation is not None:
+        print("subgrid: based on water level relation basin and nodes")
+        tables['basin_subgrid'] = generate_basin_subgrid(basins_nodes_h_relation)
+
+    # create laterals table
     if method_laterals == 1:
         if laterals is None or laterals_data is None:
             raise ValueError("method_laterals = 1 requires laterals and laterals_areas_data")
-        print(' - laterals based on lateral inflow according to dhydro network')
         tables['basin_time'] = generate_basin_time_table_laterals(
             basins=basins, 
             basin_areas=basin_areas, 
@@ -284,32 +322,32 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
             laterals_data=laterals_data,
             saveat=saveat
         )
+        print('laterals: based on lateral inflow according to dhydro network')
     elif method_laterals == 2:
         if laterals_areas_data is None:
             raise ValueError("method_laterals = 2 requires laterals_areas_data")
-        print(' - laterals based on lateral inflow (timeseries) per area')
         tables['basin_time'] = generate_basin_time_table_laterals_areas_data(
             basins=basins, 
             areas=areas, 
             laterals_areas_data=laterals_areas_data
         )
+        print('laterals: based on lateral inflow (timeseries) per area')
     elif method_laterals == 3:
         if laterals_drainage_per_ha is None:
             raise ValueError("method_laterals = 3 requires laterals_drainage_per_ha")
-        print(' - laterals based on homogeneous lateral inflow timeseries')
         tables['basin_time'] = generate_basin_time_table_laterals_drainage_per_ha(
             basins=basins, 
             basin_areas=basin_areas, 
             laterals_drainage_per_ha=laterals_drainage_per_ha
         )
+        print('laterals: based on homogeneous lateral inflow timeseries')
     else:
         raise ValueError('method_laterals should be 1, 2 or 3')
 
     # create tables for BOUNDARIES
-    print('boundaries:')
     if method_boundaries and boundaries_timeseries_data is not None:
-        print('- boundaries based on timeseries')
         flow_boundaries = boundaries[boundaries['ribasim_type']=="FlowBoundary"]
+        print(f'flowboundaries: based on timeseries ({len(flow_boundaries)} flowboundaries)')
         tables['flow_boundary_time'] = generate_boundary_time_table(
             flow_boundaries, 
             boundaries_timeseries_data,
@@ -318,6 +356,7 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
         tables['flow_boundary_static'] = None
 
         level_boundaries = boundaries[boundaries['ribasim_type']=="LevelBoundary"]
+        print(f'levelboundaries: based on timeseries ({len(level_boundaries)} levelboundaries)')
         tables['level_boundary_time'] = generate_boundary_time_table(
             level_boundaries, 
             boundaries_timeseries_data,
@@ -343,10 +382,10 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
             }
         )
         tables['flow_boundary_time'] = None
-    
+        
     # create tables for PUMPS
-    print("pumps")
     pumps = split_nodes[split_nodes['ribasim_type'] == 'Pump']
+    print(f"pumps: generated ({len(pumps)} pumps)")
     tables['pump_static'] = pd.DataFrame(
         data={
             "node_id": pumps["split_node_node_id"],
@@ -355,17 +394,18 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
     )
 
     # create tables for OUTLETS
-    print("outlets")
     outlets = split_nodes[split_nodes['ribasim_type'] == 'Outlet']
+    print(f"outlets: generated ({len(outlets)} outlets)")
     tables['outlet_static'] = pd.DataFrame(
         data={
             "node_id": outlets["split_node_node_id"],
             "flow_rate": [0] * len(outlets),
         }
     )
+
     # create tables for TABULATED RATING CURVES
-    print("tabulated_rating_curves")
     tabulated_rating_curves = split_nodes[split_nodes['ribasim_type'] == 'TabulatedRatingCurve']
+    print(f"tabulated_rating_curves: generated ({len(tabulated_rating_curves)} tabulated_rating_curves)")
     tables['tabulated_rating_curve_static'] = generate_tabulated_rating_curve(
         basins_outflows, tabulated_rating_curves, 
         basin_h, edge_q_df, weir_q_df, uniweir_q_df, 
@@ -374,6 +414,7 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, basin_a
     
     # create tables for MANNINGRESISTANCE
     manningresistance = split_nodes[split_nodes['ribasim_type'] == 'ManningResistance']
+    print(f"manningresistance: generated ({len(manningresistance)} manningresistance)")
     tables['manningresistance_static'] = generate_manning_resistances(manningresistance, set_name)
 
     return tables

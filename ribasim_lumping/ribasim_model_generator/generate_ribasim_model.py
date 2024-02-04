@@ -67,6 +67,7 @@ def generate_ribasim_basins(
     basin_profile: pd.DataFrame,
     basin_time: pd.DataFrame,
     basin_state: pd.DataFrame,
+    basin_subgrid: pd.DataFrame
 ):
     """Generate settings for Ribasim Basins:
     static: node_id, drainage, potential_evaporation, infiltration, precipitation, urban_runoff
@@ -76,7 +77,7 @@ def generate_ribasim_basins(
         print(f"basins (--)", end="", flush=True)
         return ribasim.Basin()
     print(f"basins ({len(basin_state)}x)", end="", flush=True)
-    return ribasim.Basin(profile=basin_profile, time=basin_time, state=basin_state)
+    return ribasim.Basin(profile=basin_profile, time=basin_time, state=basin_state, subgrid=basin_subgrid)
 
 
 def generate_ribasim_level_boundaries(
@@ -132,8 +133,8 @@ def generate_ribasim_outlets(outlet_static: gpd.GeoDataFrame):
 def generate_ribasim_tabulatedratingcurves(
     tabulated_rating_curve_static: pd.DataFrame
 ):
-    """generate ribasim tabulated rating using dummyvalues for level and discharge
-    static: node_id, level, discharge"""
+    """generate ribasim tabulated rating using dummyvalues for level and flow_rate
+    static: node_id, level, flow_rate"""
     print("tabulatedratingcurve ", end="", flush=True)
     if tabulated_rating_curve_static is None or tabulated_rating_curve_static.empty:
         print("   x no tabulated rating curve")
@@ -217,7 +218,8 @@ def generate_ribasim_model(
     ribasim_basins = generate_ribasim_basins(
         basin_profile=tables['basin_profile'],
         basin_time=tables['basin_time'], 
-        basin_state=tables['basin_state']
+        basin_state=tables['basin_state'],
+        basin_subgrid=tables['basin_subgrid']
     )
 
     ribasim_level_boundaries = generate_ribasim_level_boundaries(

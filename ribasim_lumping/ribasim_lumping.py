@@ -87,6 +87,7 @@ class RibasimLumpingNetwork(BaseModel):
     basins_h_df: pd.DataFrame = None
     basins_a_df: pd.DataFrame = None
     basins_v_df: pd.DataFrame = None
+    basins_nodes_h_relation: gpd.GeoDataFrame = None
     edge_q_df: pd.DataFrame = None
     weir_q_df: pd.DataFrame = None
     uniweir_q_df: pd.DataFrame = None
@@ -226,7 +227,6 @@ class RibasimLumpingNetwork(BaseModel):
                 nodes=self.nodes_gdf, 
                 buffer_distance=hydamo_boundary_bufdist,
             )
-
             # split edges by split node locations so we end up with an network where split nodes are only located on nodes (and not edges)
             self.split_nodes, self.edges_gdf, self.nodes_gdf = split_edges_by_split_nodes(
                 self.split_nodes, 
@@ -246,11 +246,11 @@ class RibasimLumpingNetwork(BaseModel):
                 self.boundaries_gdf['quantity'] = 'waterlevelbnd'  # add default bnd type if not present in gdf
             
             # remove non-snapped split nodes and boundaries
-            print("Remove non-snapped split nodes from dataset")
             split_nodes_not_on_network = self.split_nodes.loc[(self.split_nodes['edge_no'] == -1) & (self.split_nodes['node_no'] == -1)]
+            print(f"Remove non-snapped split nodes from dataset ({len(split_nodes_not_on_network)})")
             self.split_nodes = self.split_nodes.loc[[i not in split_nodes_not_on_network.index for i in self.split_nodes.index]]
-            print("Remove non-snapped boundaries from dataset")
             boundaries_not_on_network = self.boundaries_gdf.loc[self.boundaries_gdf['node_no'] == -1]
+            print(f"Remove non-snapped boundaries from dataset ({len(boundaries_not_on_network)})")
             self.boundaries_gdf = self.boundaries_gdf.loc[[i not in boundaries_not_on_network.index for i in self.boundaries_gdf.index]]
 
             if hydamo_write_results_to_gpkg:
@@ -657,40 +657,41 @@ class RibasimLumpingNetwork(BaseModel):
 
 
     def generate_ribasim_model_complete(
-            self, 
-            set_name: str,
-            dummy_model: bool = False,
-            saveat: int = None,
-            interpolation_lines: int = 5,
-            database_gpkg: str = 'database.gpkg',
-            results_dir: str = 'results'
-        ):
-        
+        self, 
+        set_name: str,
+        dummy_model: bool = False,
+        saveat: int = None,
+        interpolation_lines: int = 5,
+        database_gpkg: str = 'database.gpkg',
+        results_dir: str = 'results',
+        results_subgrid: bool = False
+    ):
         if set_name not in self.basis_set_names:
             raise ValueError(f'set_name {set_name} not in available set_names')
         
         # preprocessing data to input for tables
         basins_outflows, node_h_basin, node_h_node, node_a, node_v, basin_h, basin_a, basin_v, \
-            node_bedlevel, node_targetlevel, orig_bedlevel, edge_q_df, weir_q_df, uniweir_q_df, \
-                orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df = \
-                    preprocessing_ribasim_model_tables(
-                        dummy_model=dummy_model,
-                        map_data=self.map_data, 
-                        his_data=self.his_data,
-                        volume_data=self.volume_data, 
-                        nodes=self.nodes_gdf, 
-                        weirs=self.weirs_gdf,
-                        uniweirs=self.uniweirs_gdf,
-                        pumps=self.pumps_gdf, 
-                        culverts=self.culverts_gdf,
-                        orifices=self.orifices_gdf,
-                        basins=self.basins_gdf, 
-                        split_nodes=self.split_nodes, 
-                        basin_connections=self.basin_connections_gdf, 
-                        boundary_connections=self.boundary_connections_gdf,
-                        interpolation_lines=interpolation_lines,
-                        set_names=self.basis_set_names
-                    )
+            node_bedlevel, node_targetlevel, orig_bedlevel, basins_nodes_h_relation, \
+                edge_q_df, weir_q_df, uniweir_q_df, \
+                    orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df = \
+                        preprocessing_ribasim_model_tables(
+                            dummy_model=dummy_model,
+                            map_data=self.map_data, 
+                            his_data=self.his_data,
+                            volume_data=self.volume_data, 
+                            nodes=self.nodes_gdf, 
+                            weirs=self.weirs_gdf,
+                            uniweirs=self.uniweirs_gdf,
+                            pumps=self.pumps_gdf, 
+                            culverts=self.culverts_gdf,
+                            orifices=self.orifices_gdf,
+                            basins=self.basins_gdf, 
+                            split_nodes=self.split_nodes, 
+                            basin_connections=self.basin_connections_gdf, 
+                            boundary_connections=self.boundary_connections_gdf,
+                            interpolation_lines=interpolation_lines,
+                            set_names=self.basis_set_names
+                        )
         
         self.nodes_gdf["bedlevel"] = orig_bedlevel
         self.nodes_h_df = node_h_node
@@ -700,6 +701,7 @@ class RibasimLumpingNetwork(BaseModel):
         self.basins_h_df = basin_h
         self.basins_a_df = basin_a
         self.basins_v_df = basin_v
+        self.basins_nodes_h_relation = basins_nodes_h_relation
         self.edge_q_df = edge_q_df
         self.weir_q_df = weir_q_df
         self.uniweir_q_df = uniweir_q_df
@@ -726,6 +728,7 @@ class RibasimLumpingNetwork(BaseModel):
                             if i_ts == self.initial_waterlevels_timestep:
                                 break
                             ind_initial_h += 1
+                        break
                 basin_h_initial = basin_h.loc[set_name].iloc[ind_initial_h + 2 + interpolation_lines*2]
             elif self.method_initial_waterlevels == 3:
                 raise ValueError('method initial waterlevels = 3 not yet implemented')
@@ -740,6 +743,7 @@ class RibasimLumpingNetwork(BaseModel):
             basins=self.basins_gdf, 
             basin_areas=self.basin_areas_gdf,
             areas=self.areas_gdf,
+            basins_nodes_h_relation=self.basins_nodes_h_relation,
             laterals=self.laterals_gdf,
             laterals_data=self.laterals_data,
             boundaries=self.boundaries_gdf, 
@@ -762,9 +766,6 @@ class RibasimLumpingNetwork(BaseModel):
             bridge_q_df=bridge_q_df, 
             pump_q_df=pump_q_df,
         )
-        # for table_name, table in tables.items():
-        #     display(table_name)
-        #     display(table)
 
         # generate ribasim model
         ribasim_model = generate_ribasim_model(
@@ -786,6 +787,8 @@ class RibasimLumpingNetwork(BaseModel):
         # check for timestep (saveat)
         if saveat is not None:
             ribasim_model.solver = ribasim.Solver(saveat=saveat)
+        if results_subgrid:
+            ribasim_model.results.subgrid = True
 
         ribasim_model.write(Path(self.simulation_path, "ribasim.toml"))
         with open(Path(self.simulation_path, "run_ribasim_model.bat"), 'w') as f:
@@ -838,6 +841,7 @@ class RibasimLumpingNetwork(BaseModel):
             basin_h=self.basins_h_df,
             basin_a=self.basins_a_df,
             basin_v=self.basins_v_df,
+            basins_nodes_h_relation=self.basins_nodes_h_relation
         )
         gdfs_none = dict()
         gdfs = dict()
@@ -845,10 +849,11 @@ class RibasimLumpingNetwork(BaseModel):
             if gdf is None:
                 gdfs_none[gdf_name] = gdf
             elif "geometry" not in gdf.columns:
-                column = gdf.columns.name
-                gdf = gdf.stack()
-                gdf.name = "data"
-                gdf = gdf.reset_index().reset_index().sort_values(by=[column, "index"]).reset_index(drop=True).drop(columns="index")
+                if gdf.columns.name is not None:
+                    column = gdf.columns.name
+                    gdf = gdf.stack()
+                    gdf.name = "data"
+                    gdf = gdf.reset_index().reset_index().sort_values(by=[column, "index"]).reset_index(drop=True).drop(columns="index")
                 gdf["geometry"] = Point(0,0)
                 gdf = gpd.GeoDataFrame(gdf, geometry="geometry", crs=28992)
                 gdfs[gdf_name] = gdf

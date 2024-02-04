@@ -275,14 +275,13 @@ def create_basin_areas_based_on_drainage_unit_areas(
 def create_basins_based_on_subgraphs_and_nodes(
         graph: nx.DiGraph, 
         nodes: gpd.GeoDataFrame,
+        edges: gpd.GeoDataFrame
     ) -> gpd.GeoDataFrame:
     """
     create basin nodes based on basin_areas or nodes
     """
-
     connected_components = list(nx.weakly_connected_components(graph))
     centralities = {}
-
     for i, component in enumerate(connected_components):
         subgraph = graph.subgraph(component).to_undirected()
         centrality_subgraph = nx.closeness_centrality(subgraph)
@@ -294,16 +293,62 @@ def create_basins_based_on_subgraphs_and_nodes(
         dict(node_no=list(centralities.keys()), centrality=list(centralities.values()))
     )
     centralities = centralities[centralities["node_no"] < 900_000_000_000]
-    tmp = nodes[['node_no', 'basin', 'geometry']].merge(
+    basins_temp = nodes[['node_no', 'basin', 'geometry']].merge(
         centralities, 
         how="outer", 
         left_on="node_no", 
         right_on="node_no"
     )
-    tmp = tmp[tmp["basin"] != -1].sort_values(
+    basins_temp = basins_temp[basins_temp["basin"] != -1].sort_values(
         by=["basin", "centrality"], ascending=[True, False]
     )
-    basins = tmp.groupby(by="basin").first().reset_index().set_crs(nodes.crs)
+    basins = basins_temp.groupby(by="basin").first().reset_index().set_crs(nodes.crs)
+    no_nodes_basin = basins_temp.groupby(by="basin")["basin"].count()
+    no_nodes_basin.name = "no_nodes_basin"
+    basins = basins.merge(no_nodes_basin, how='left', left_on="basin", right_index=True)
+    
+    basins1 = basins[basins.no_nodes_basin!=2]
+    basins2 = basins[basins.no_nodes_basin==2]
+    if ~basins2.empty:
+        basins_temp2 = basins_temp[basins_temp.basin.isin(basins2.basin.values)]
+        basins2a = basins_temp2.groupby("basin").first().reset_index().rename(columns={"node_no": "node_no1"})
+        basins2b = basins_temp2.groupby("basin").last().reset_index()[["basin", "node_no"]].rename(columns={"node_no": "node_no2"})
+        basins2x = basins2a.merge(basins2b, how='left', on='basin')
+
+        basins2y = basins2x[["basin", "node_no1", "node_no2"]].merge(
+            edges[["basin", "edge_no", "from_node", "to_node"]], 
+            how='left', 
+            left_on=["basin", "node_no1"], 
+            right_on=["basin", "from_node"]
+        ).fillna(-1).astype(int)
+        basins2z = basins2y.merge(
+            edges[["basin", "edge_no", "from_node", "to_node"]], 
+            how='left', 
+            left_on=["basin", "node_no2"], 
+            right_on=["basin", "from_node"]
+        ).fillna(-1).astype(int)
+        basins2z.loc[basins2z["edge_no_x"]!=-1, "edge_no"] = basins2z["edge_no_x"]
+        basins2z.loc[basins2z["edge_no_y"]!=-1, "edge_no"] = basins2z["edge_no_y"]
+        basins2z.loc[basins2z["from_node_x"]!=-1, "from_node"] = basins2z["from_node_x"]
+        basins2z.loc[basins2z["from_node_y"]!=-1, "from_node"] = basins2z["from_node_y"]
+        basins2z.loc[basins2z["to_node_x"]!=-1, "to_node"] = basins2z["to_node_x"]
+        basins2z.loc[basins2z["to_node_y"]!=-1, "to_node"] = basins2z["to_node_y"]
+        basins2z = basins2z.fillna(-1).astype(int).merge(edges[["edge_no", "geometry"]], how="left", on="edge_no")
+        basins2s = basins2z[
+            ((basins2z.from_node==basins2z.node_no1) & (basins2z.to_node==basins2z.node_no2)) | 
+            ((basins2z.from_node==basins2z.node_no2) & (basins2z.to_node==basins2z.node_no1))
+        ]
+        basins2s = gpd.GeoDataFrame(
+            basins2s,
+            geometry=[v.centroid for v in basins2s.geometry.values],
+            crs=basins.crs
+        )
+        basins2_geometry = basins2["geometry"]
+        basins2 = basins2.drop(columns=["geometry"]).merge(basins2s[["basin", "geometry"]], how="left", on="basin")
+        basins2["geometry"] = basins2["geometry"].fillna(basins2_geometry)
+
+    basins = pd.concat([basins1, basins2])
+    basins = basins[basins.geometry != None]
     print(f" - create final locations Ribasim-Basins ({len(basins)}x)")
     return basins
 
@@ -447,38 +492,17 @@ def create_boundary_connections(
         return None, split_nodes
     
     # merge boundaries with nodes and basins
-    try:
-        # initially on column name
-        boundaries_conn = boundaries.rename(
-            columns={"geometry": "geometry_boundary"}
-        ).merge(
-            nodes.rename(columns={"node_no": "name"})[["name", "basin"]], 
-            how='inner', 
-            left_on="name", 
-            right_on="name"
-        )
-    except KeyError:
-        # otherwise on node_no
-        boundaries_conn = boundaries.rename(
-            columns={"geometry": "geometry_boundary"}
-        ).merge(
-            nodes[["node_no", "basin"]], 
-            how='inner', 
-            left_on="node_no", 
-            right_on="node_no"
-        )
-
-    boundaries_conn = boundaries_conn.merge(
-        basins[["basin", "geometry"]], 
-        left_on="basin", 
-        right_on="basin"
-    ).rename(
-        columns={
-            "geometry": "geometry_basin", 
-            "name": "boundary_node_id",
-            "node_no": "boundary_node_no",
-        }
+    boundaries_conn = boundaries[
+        ["boundary", "quantity", "geometry"]
+    ].sjoin(
+        nodes[["node_no", "geometry", "basin"]]
+    ).drop(columns=["index_right"]).rename(
+        columns={"node_no": "boundary_node_no"}
     )
+    boundaries_conn.crs = nodes.crs
+    boundaries_conn = boundaries_conn.merge(
+        basins[["basin", "geometry"]], how="left", on="basin"
+    ).rename(columns={"geometry_x": "geometry_boundary", "geometry_y": "geometry_basin"})
     
     # Discharge boundaries (1 connection, always inflow)
     dischargebnd_conn_in = boundaries_conn[
@@ -677,12 +701,12 @@ def regenerate_node_ids(
         lambda x: x["basin_node_id"] if x["connection"].startswith("basin") else (
             x["boundary_node_id"] if x["connection"].startswith("boundary") else x["split_node_node_id"]
         ), axis=1
-    ).astype(int)
+    ).fillna(-1).astype(int)
     boundary_connections["to_node_id"] = boundary_connections.apply(
         lambda x: x["basin_node_id"] if x["connection"].endswith("basin") else (
             x["boundary_node_id"] if x["connection"].endswith("boundary") else x["split_node_node_id"]
         ), axis=1
-    ).astype(int)
+    ).fillna(-1).astype(int)
 
     basin_areas = basin_areas.merge(basins[["basin", "basin_node_id"]], on="basin")
 
@@ -692,22 +716,22 @@ def regenerate_node_ids(
     nodes["basin_node_id"] = nodes["basin"].replace(mapping_basins_node_id)
     edges["basin_node_id"] = edges["basin"].replace(mapping_basins_node_id)
 
-    connections = pd.concat([
-        basin_connections[["from_node_id", "to_node_id"]], 
-        boundary_connections[["from_node_id", "to_node_id"]]
-    ])
-    split_nodes = gpd.GeoDataFrame(split_nodes.merge(
-        connections.set_index("to_node_id"), 
-        how="left", 
-        left_on="split_node_node_id", 
-        right_index=True
-    ), geometry="geometry", crs=split_nodes.crs)
-    split_nodes = gpd.GeoDataFrame(split_nodes.merge(
-        connections.set_index("from_node_id"), 
-        how="left", 
-        left_on="split_node_node_id", 
-        right_index=True
-    ), geometry="geometry", crs=split_nodes.crs)
+    # connections = pd.concat([
+    #     basin_connections[["from_node_id", "to_node_id"]], 
+    #     boundary_connections[["from_node_id", "to_node_id"]]
+    # ])
+    # split_nodes = gpd.GeoDataFrame(split_nodes.merge(
+    #     connections.set_index("to_node_id"), 
+    #     how="left", 
+    #     left_on="split_node_node_id", 
+    #     right_index=True
+    # ), geometry="geometry", crs=split_nodes.crs)
+    # split_nodes = gpd.GeoDataFrame(split_nodes.merge(
+    #     connections.set_index("from_node_id"), 
+    #     how="left", 
+    #     left_on="split_node_node_id", 
+    #     right_index=True
+    # ), geometry="geometry", crs=split_nodes.crs)
 
     # the above actions can result in duplicate entries in tables. only keep one records of those duplicates
     boundaries = boundaries.loc[~boundaries.duplicated()].copy()
@@ -820,7 +844,8 @@ def generate_ribasim_network_using_split_nodes(
     )
     basins = create_basins_based_on_subgraphs_and_nodes(
         graph=network_graph, 
-        nodes=nodes
+        nodes=nodes,
+        edges=edges
     )
     if use_laterals_for_basin_area:
         areas, basin_areas = create_basin_areas_based_on_drainage_unit_areas(
