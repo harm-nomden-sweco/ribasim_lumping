@@ -786,7 +786,7 @@ def assign_unassigned_areas_to_basin_areas(
         # to stop while loop (because no new areas will be assigned anymore) but still unassigned areas remain
         if nr_unassigned_areas == nr_unassigned_areas_prev:
             nr_unassigned_areas = 0
-            print(" - not all unassigned areas could be assigned automatically ({nr_unassigned_areas_prev}x remaining). Please inspect manually")
+            print(f" - not all unassigned areas could be assigned automatically ({nr_unassigned_areas_prev}x remaining). Please inspect manually")
     
     # update some other basin areas columns
     basin_areas["area_ha"] = basin_areas.geometry.area / 10000.0
