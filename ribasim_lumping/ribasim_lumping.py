@@ -314,7 +314,8 @@ class RibasimLumpingNetwork(BaseModel):
         areas_gdf = read_geom_file(
             filepath=areas_file_path, 
             layer_name=layer_name, 
-            crs=crs
+            crs=crs,
+            explode_geoms=False,
         )
         areas_code_column = areas_code_column if areas_code_column is not None else list(areas_gdf.columns)[0]
         self.areas_gdf = areas_gdf[[areas_code_column, "geometry"]]
