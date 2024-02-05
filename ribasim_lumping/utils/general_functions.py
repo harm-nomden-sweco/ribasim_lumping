@@ -729,20 +729,21 @@ def assign_unassigned_areas_to_basin_areas(
         nr_unassigned_areas_prev = nr_unassigned_areas
 
         # get neighbouring basin areas of areas
-        area_to_basin = {i: basin_areas.loc[_areas.loc[i, 'geometry'].buffer(1).intersects(basin_areas.geometry.values), 'basin'].values
-                         for i in _areas.index}
+        tmp = _areas.buffer(1).to_frame().sjoin(basin_areas)
+        area_to_basin = {i: basin_areas.loc[tmp.loc[i]['index_right'], 'basin'].tolist() for i in _areas.index}
+        area_to_basin = {k: v if isinstance(v, list) else [v] for k, v in area_to_basin.items()}
         
         if drainage_areas is not None:
             # get drainage area of which area is part of. in case multiple, use the one with largest overlap
-            area_to_drain = {i: drainage_areas.loc[_areas.loc[i, 'geometry'].intersects(drainage_areas.geometry)].index.values
-                             for i in _areas.index}
+            tmp = _areas.sjoin(drainage_areas)
+            area_to_drain = {i: drainage_areas.loc[tmp.loc[[i], :]['index_right']].index.values for i in _areas.index}
             area_to_drain = {k: v[0] if len(v) <= 1 
-                             else v[np.argmax([drainage_areas.loc[i, 'geometry'].intersection(_areas.loc[k, 'geometry']).area 
-                                               for i in v])]
+                             else v[np.argmax([drainage_areas.loc[i, 'geometry'].intersection(_areas.loc[k, 'geometry']).area for i in v])]
                              for k, v in area_to_drain.items() if len(v) > 0}
             
             # get drainage area of which basin area is part of. in case multiple, use the one with largest overlap
-            basin_to_drain = {i: drainage_areas.loc[basin_areas.loc[basin_areas['basin'] == i, 'geometry'].intersects(drainage_areas.geometry)].index.values
+            tmp = basin_areas.sjoin(drainage_areas)
+            basin_to_drain = {i: drainage_areas.loc[tmp.loc[basin_areas['basin'] == i]['index_right']].index.values
                               for i in basin_areas['basin']}
             basin_to_drain = {k: v[0] if len(v) <= 1 
                               else v[np.argmax([drainage_areas.loc[i, 'geometry'].intersection(basin_areas.loc[basin_areas['basin'] == k, 'geometry']).area 
