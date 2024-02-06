@@ -801,6 +801,21 @@ def generate_ribasim_types_for_all_split_nodes(
     return boundaries, split_nodes, basins
 
 
+def check_basins_connected_to_basin_areas(basins: gpd.GeoDataFrame, basin_areas: gpd.GeoDataFrame):
+    """
+    Check if basin locations are associated basin area and if not, report it
+    """
+    print(' - check if basins and basin areas are correctly connected')
+    check = True
+    for b in basins['basin']:
+        if b not in basin_areas['basin']:
+            if check:
+                print('   - Following basins are not connected to a basin area (either due to incorrect network input or multiple basins in the same basin area):')
+                check = False
+            print(f'      Basin {b}')
+
+
+
 def generate_ribasim_network_using_split_nodes(
         nodes: gpd.GeoDataFrame,
         edges: gpd.GeoDataFrame,
@@ -894,6 +909,10 @@ def generate_ribasim_network_using_split_nodes(
         basins=basins, 
         split_node_type_conversion=split_node_type_conversion, 
         split_node_id_conversion=split_node_id_conversion
+    )
+    check_basins_connected_to_basin_areas(
+        basins=basins, 
+        basin_areas=basin_areas
     )
     return dict(
         basin_areas=basin_areas,
