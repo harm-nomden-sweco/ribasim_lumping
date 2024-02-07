@@ -24,6 +24,7 @@ from .utils.general_functions import (
     split_edges_by_split_nodes,
     log_and_remove_duplicate_geoms,
     assign_unassigned_areas_to_basin_areas,
+    split_edges_by_dx,
 )
 from .dhydro.read_dhydro_simulations import add_dhydro_basis_network, add_dhydro_simulation_data
 from .hydamo.read_hydamo_network import add_hydamo_basis_network
@@ -141,7 +142,8 @@ class RibasimLumpingNetwork(BaseModel):
             ribasim_input_split_nodes_gpkg_layer: Path = 'split_nodes',
             hydamo_split_nodes_bufdist: float = 10.0,
             hydamo_boundary_bufdist: float = 10.0,
-            hydamo_write_results_to_gpkg: bool = False
+            hydamo_write_results_to_gpkg: bool = False,
+            hydamo_split_network_dx: float = None,
         ) -> Tuple[gpd.GeoDataFrame]:
         """
         Add (detailed) base network which will used to derive Ribasim network. Source type can either be "dhydro" or
@@ -171,6 +173,9 @@ class RibasimLumpingNetwork(BaseModel):
             hydamo_split_nodes_bufdist (float):         Buffer distance (in meter) to snap split nodes to HyDAMO network
             hydamo_boundary_bufdist (float):            Buffer distance (in meter) to snap boundaries to HyDAMO network start/end nodes
             hydamo_write_results_to_gpkg (bool):        Write intermediate (HyDAMO) results (split nodes, edges, nodes, boundaries) to geopackages
+            hydamo_split_network_dx (float):            Distance (in meter) to split up hydamo network (hydroobjects) into smaller sections. Default None
+                                                        meaning no splitting is performed. The actual lengths of splitted sections will be close to given distance
+                                                        but not exactly the same to prevent generating very small sections
 
         Returns:
             gpd.Geo:                                    Network
@@ -211,6 +216,13 @@ class RibasimLumpingNetwork(BaseModel):
                 layer_name=ribasim_input_boundary_gpkg_layer,
             )
             
+            # Split up hydamo edges with given distance as approximate length of new edges
+            if hydamo_split_network_dx is not None:
+                self.edges_gdf = split_edges_by_dx(
+                    edges=self.edges_gdf, 
+                    dx=hydamo_split_network_dx,
+                )
+
             # Because the split node and boundary locations won't always nicely match up with HyDAMO network, we need to adjust this
             # by snapping split nodes and boundaries to network nodes/edges
             self.split_nodes = snap_to_network(
@@ -227,6 +239,7 @@ class RibasimLumpingNetwork(BaseModel):
                 nodes=self.nodes_gdf, 
                 buffer_distance=hydamo_boundary_bufdist,
             )
+
             # split edges by split node locations so we end up with an network where split nodes are only located on nodes (and not edges)
             self.split_nodes, self.edges_gdf, self.nodes_gdf = split_edges_by_split_nodes(
                 self.split_nodes, 

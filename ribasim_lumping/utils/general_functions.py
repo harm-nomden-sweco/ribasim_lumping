@@ -650,6 +650,70 @@ def split_edges_by_split_nodes(
     return split_nodes, edges, nodes
 
 
+def split_edges_by_dx(
+        edges: gpd.GeoDataFrame,
+        dx: float,
+    ) -> gpd.GeoDataFrame:
+    """
+    Splits edges (lines) by a given distance (in meter) so each splitted section approximates the given distance
+
+    Parameters
+    ----------
+    edges : gpd.GeoDataFrame
+        Line feature dataset containing edges
+    dx: float
+        Distance (in meter) for new splitted sections
+
+    Returns
+    -------
+    GeoDataFrame with splitted up edges
+    """
+    edges = edges.copy()
+    edges_to_add = []
+    edges_to_remove = []
+    print(f'Split up edges so each section approximates dx={dx:.3f} m...')
+    for i, row in edges.iterrows():
+        line = row['geometry']
+
+        # split up line depending on the length compared to the desired length
+        n = int(np.round(line.length / dx))
+        if n <= 1:
+            continue  # no need to split
+        dx_star = line.length / n
+        dists_to_split = [(i + 1) * dx_star for i in range(n - 1)]
+        
+        # now split and store
+        new_lines = split_line_in_multiple(line, dists_to_split)
+        for j, l in enumerate(new_lines):
+            edges_to_add.append((i, j, l))
+        edges_to_remove.append(i)
+    
+    # construct new geodataframe with new edges to add
+    edges_to_add = gpd.GeoDataFrame(
+        pd.concat(
+            [
+                edges.loc[[x[0] for x in edges_to_add]][[c for c in edges.columns if c != 'geometry']].reset_index(drop=True), 
+                gpd.GeoDataFrame(
+                    data={'suffix': [x[1] for x in edges_to_add]}, 
+                    geometry=[x[2] for x in edges_to_add]
+                )
+            ],
+            axis=1,
+        )
+    )
+    # append branch_id column with suffix to identify splitted edges
+    if 'branch_id' in edges_to_add.columns:
+        edges_to_add['branch_id'] = [f"{b}___{s}" for b, s in zip(edges_to_add['branch_id'], edges_to_add['suffix'])]
+    edges_to_add.drop(columns=['suffix'], inplace=True)
+
+    # add new lines and remove old ones
+    edges_new = edges.loc[edges.index[~np.isin(edges.index, edges_to_remove)]]
+    edges_new = gpd.GeoDataFrame(pd.concat([edges_new, edges_to_add], ignore_index=True))
+    if 'edge_no' in edges_new.columns:
+        edges_new['edge_no'] = np.arange(len(edges_new))
+    return edges_new
+
+
 def split_line_in_two(line: LineString, distance_along_line: float) -> List[LineString]:
     # Cuts a line in two at a distance from the line starting point
     if distance_along_line <= 0.0 or distance_along_line >= line.length:
