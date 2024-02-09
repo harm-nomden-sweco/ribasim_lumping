@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import networkx as nx
-from shapely.geometry import Point, LineString, Polygon, MultiPolygon
+from shapely.geometry import Point, LineString, Polygon, MultiPolygon, GeometryCollection
 
 
 def create_graph_based_on_nodes_edges(
@@ -234,7 +234,7 @@ def create_basin_areas_based_on_drainage_unit_areas(
         areas.geometry = areas.make_valid()
         # due to make_valid() GeometryCollections can be generated. Only take the (multi)polygon from those collections
         areas.geometry = [[g for g in gs.geoms if (isinstance(g, Polygon) or isinstance(g, MultiPolygon))][0] 
-                        if hasattr(gs, 'geoms') 
+                        if isinstance(gs, GeometryCollection) 
                         else gs
                         for gs in areas.geometry]
         # spatial join edges to areas that intersect
@@ -815,6 +815,55 @@ def check_basins_connected_to_basin_areas(basins: gpd.GeoDataFrame, basin_areas:
             print(f'      Basin {b}')
 
 
+def remove_isolated_basins_and_update_administration(
+        basins: gpd.GeoDataFrame,
+        basin_areas: gpd.GeoDataFrame,
+        areas: gpd.GeoDataFrame,
+        basin_connections: gpd.GeoDataFrame,
+        boundary_connections: gpd.GeoDataFrame,
+        edges: gpd.GeoDataFrame,
+        nodes: gpd.GeoDataFrame,
+    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """
+    Remove isolated basins (including 1-on-1 connected basin areas) based on basin and boundary connections.
+    Update the basin administration in basin areas, areas, edges and nodes
+    Returns basin, basin areas, areas, edges and nodes
+    """
+    basins, basin_areas, edges, nodes = basins.copy(), basin_areas.copy(), edges.copy(), nodes.copy()
+
+    # get isolated basins
+    connected_basins = np.unique(basin_connections['basin'].tolist() + boundary_connections['basin'].tolist())
+    isolated_basins = basins.loc[~np.isin(basins['basin'].values, connected_basins), 'basin'].values
+    print(f' - removing isolated basins ({len(isolated_basins)}x)')
+    if len(isolated_basins) == 0:
+        return basins, basin_areas, edges, nodes  # no isolated basins so no further steps needed
+
+    # get mapping of which basin are located within a basin area
+    _basin_areas = basin_areas.sjoin(basins, how='left')
+    basin_area_to_basin = {k: _basin_areas.loc[[k], 'basin_right'].values for k in _basin_areas.index.unique()}
+    basin_area_to_basin = {k: v for k, v in basin_area_to_basin.items() if not all(np.isnan(v))}
+
+    # get mapping of removed isolated basins to new basin based on the location within the same basin area
+    basin_to_basin_area = {_v: k for k, v in basin_area_to_basin.items() for _v in v}
+    isolated_basin_to_basin = {ib: basin_area_to_basin[basin_to_basin_area[ib]] for ib in isolated_basins if ib in basin_to_basin_area.keys()}
+    isolated_basin_to_basin = {k: v[np.isin(v, basins.loc[np.isin(basins['basin'].values, connected_basins)]['basin'])] for k, v in isolated_basin_to_basin.items()}
+    isolated_basin_to_basin = {k: int(v[0]) if len(v) > 0 else -(1000 + k) for k, v in isolated_basin_to_basin.items()}
+
+    # update basins, basin areas, edges and nodes. if removed basin is 1-on-1 connected to a basin area, the basin area will be removed.
+    # this also means that the basin and basin area of associated nodes and edges of that removed basin will be removed
+    basins = basins.loc[np.isin(basins['basin'].values, connected_basins)]
+    basin_areas['basin'] = [isolated_basin_to_basin[b] if b in isolated_basin_to_basin.keys() else b for b in basin_areas['basin']]
+    edges['basin'] = [isolated_basin_to_basin[b] if b in isolated_basin_to_basin.keys() else b for b in edges['basin']]
+    nodes['basin'] = [isolated_basin_to_basin[b] if b in isolated_basin_to_basin.keys() else b for b in nodes['basin']]
+    # remove 1-on-1 connected basin areas
+    edges['basin_area'] = [-1 if b < -10 else ba for b, ba in zip(edges['basin'], edges['basin_area'])]
+    nodes['basin_area'] = [-1 if b < -10 else ba for b, ba in zip(nodes['basin'], nodes['basin_area'])]
+    basin_areas = basin_areas.loc[basin_areas['basin'] >= 0]  
+    # update areas
+    areas.loc[np.isin(areas['basin'].values, isolated_basins), 'basin'] = np.nan
+
+    return basins, basin_areas, areas, edges, nodes
+
 
 def generate_ribasim_network_using_split_nodes(
         nodes: gpd.GeoDataFrame,
@@ -824,6 +873,7 @@ def generate_ribasim_network_using_split_nodes(
         boundaries: gpd.GeoDataFrame,
         laterals: gpd.GeoDataFrame,
         use_laterals_for_basin_area: bool,
+        remove_isolated_basins: bool,
         split_node_type_conversion: Dict, 
         split_node_id_conversion: Dict,
         crs: int = 28992,
@@ -892,6 +942,16 @@ def generate_ribasim_network_using_split_nodes(
         nodes=nodes,
         edges=edges
     )
+    if remove_isolated_basins:
+        basins, basin_areas, areas, edges, nodes = remove_isolated_basins_and_update_administration(
+            basins=basins, 
+            basin_areas=basin_areas,
+            areas=areas,
+            basin_connections=basin_connections,
+            boundary_connections=boundary_connections,
+            edges=edges,
+            nodes=nodes,
+        )
     boundaries, split_nodes, basins, basin_areas, nodes, edges, areas = regenerate_node_ids(
         boundaries=boundaries,
         split_nodes=split_nodes,
