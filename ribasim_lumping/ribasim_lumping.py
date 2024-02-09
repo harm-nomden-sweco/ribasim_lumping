@@ -616,7 +616,8 @@ class RibasimLumpingNetwork(BaseModel):
             simulation_code: str,
             split_node_type_conversion: Dict,
             split_node_id_conversion: Dict,
-            use_laterals_for_basin_area: bool = False
+            use_laterals_for_basin_area: bool = False,
+            remove_isolated_basins: bool = False,
         ) -> Dict:
         
         self.simulation_code = simulation_code
@@ -644,6 +645,7 @@ class RibasimLumpingNetwork(BaseModel):
             boundaries=self.boundaries_gdf,
             laterals=self.laterals_gdf,
             use_laterals_for_basin_area=use_laterals_for_basin_area,
+            remove_isolated_basins=remove_isolated_basins,
             split_node_type_conversion=split_node_type_conversion,
             split_node_id_conversion=split_node_id_conversion,
             crs=self.crs,
@@ -659,11 +661,17 @@ class RibasimLumpingNetwork(BaseModel):
         self.boundary_connections_gdf = results['boundary_connections']
 
         # assign areas to basin areas which have no edge within it so it is not assigned to any basin area
-        self.basin_areas_gdf, self.areas_gdf = assign_unassigned_areas_to_basin_areas(
+        # also update the basin and basin area code in edges and nodes
+        results = assign_unassigned_areas_to_basin_areas(
             self.areas_gdf,
             self.basin_areas_gdf, 
-            self.drainage_areas_gdf
+            self.drainage_areas_gdf,
+            self.edges_gdf,
         )
+        self.areas_gdf = results['areas']
+        self.basin_areas_gdf = results['basin_areas']
+        if 'edges' in results.keys():
+            self.edges_gdf = results['edges']
 
         # Export to geopackage
         self.export_to_geopackage(simulation_code=simulation_code)

@@ -761,10 +761,13 @@ def assign_unassigned_areas_to_basin_areas(
         areas: gpd.GeoDataFrame,
         basin_areas: gpd.GeoDataFrame, 
         drainage_areas: gpd.GeoDataFrame = None,
-    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+        edges: gpd.GeoDataFrame = None,
+    ) -> Dict[str, gpd.GeoDataFrame]:
     """
-    Assign unassigned areas to basin areas based on neighbouring basin areas within the same drainage area if possible.
-    Drainage areas are optional to include.  
+    Assign unassigned areas to basin areas based on neighbouring basin areas within optionally the same drainage area if possible.
+    Optionally, if edges are provided, the basin and basin_area columns will be updated in those gdfs for edges
+    where no basin/basin_area is filled in (equals to -1). Those will be filled based on overlapping basin area after assignment
+    of unassigned areas. The edges will also be used to assign unassigned areas more logically based on network connections.
     
     Parameters
     ----------
@@ -774,10 +777,13 @@ def assign_unassigned_areas_to_basin_areas(
         Basin areas
     drainage_areas : gpd.GeoDataFrame
         Drainage areas. Optional
-
+    edges : gpd.GeoDataFrame
+        Edges. Optional
+        
     Returns
     -------
-    Tuple of basin areas where unassigned areas are assigned to basin areas and areas geodataframe with updated basin codes
+    Dict of basin areas where unassigned areas are assigned to basin areas and areas geodataframe with updated basin codes
+    It will also include edges if they are provided as input
     """
     
     areas, basin_areas, drainage_areas = areas.copy(), basin_areas.copy(), drainage_areas.copy()
@@ -786,9 +792,11 @@ def assign_unassigned_areas_to_basin_areas(
     _areas = areas.loc[areas['basin'].isna()]
     nr_unassigned_areas = len(_areas)
     print(f" - {nr_unassigned_areas}x unassigned areas")
+
     if drainage_areas is None:
         print(" - DEBUG: drainage areas not supplied. assigning process will only be based on areas and basin areas")
     
+    to_return = {}
     while nr_unassigned_areas != 0:
         nr_unassigned_areas_prev = nr_unassigned_areas
 
@@ -862,11 +870,56 @@ def assign_unassigned_areas_to_basin_areas(
         # to stop while loop (because no new areas will be assigned anymore) but still unassigned areas remain
         if nr_unassigned_areas == nr_unassigned_areas_prev:
             nr_unassigned_areas = 0
-            print(f" - not all unassigned areas could be assigned automatically ({nr_unassigned_areas_prev}x remaining). Please inspect manually")
+
+    # update edges
+    if edges is not None:
+        print(' - updating basin and basin area codes for edges where no basin code is yet assigned')
+        # check for edges who have no assigned basin the intersecting basin area with the longest overlapping length
+        # also keep in mind that edges can be connected as a subgraph. then treat those edges as one combined thing
+        _edges = edges.loc[edges['basin'] < -10]
+        _edges.rename(columns={'basin': 'basin_old'}, inplace=True)
+        _edges['old_index'] = _edges.index  # preserve index because overlay function will reset it
+        _edges = gpd.overlay(_edges, basin_areas, how='intersection')
+        _edges['__length'] = _edges.geometry.length
+        for bo in _edges['basin_old'].unique():
+            new_basin = _edges.loc[_edges['basin_old'] == bo].groupby(['basin']).agg({'__length': 'sum'}).idxmax().values[0]
+            _edges.loc[_edges['basin_old'] == bo, 'basin'] = new_basin
+        # update basin and basin area in edges
+        edges.loc[_edges['old_index'], 'basin'] = _edges['basin'].values
+        edges.loc[_edges['old_index'], 'basin_area'] = _edges['basin_area'].values
+        to_return['edges'] = edges.copy()
+        
+        # correct areas and basin areas based on updated edges
+        _edges = gpd.overlay(edges, areas.rename(columns={'basin': 'basin_old'}), how='intersection')
+        # remove edges that overlap multiple areas, however, if it is the only edge in an area, keep it
+        multi_overlap = _edges['edge_no'].duplicated(keep=False)
+        m = {i: n for i, n in enumerate(np.bincount(_edges['area_code']))}
+        only_edge_in_area = np.array([m[int(a)] == 1 for a in _edges['area_code']])
+        _edges = _edges.loc[[True if not m else o for m, o in zip(multi_overlap, only_edge_in_area)]]  
+        # create mapping between edge and area
+        area_code_to_edge = {
+            area_code: _edges.loc[_edges['area_code'] == area_code].index.values[0]  # just pick the edge first in the list
+            for area_code in _edges['area_code'].unique()
+        }
+        # update basin of areas based on basin in edges
+        for i, row in areas.iterrows():
+            try:
+                areas.loc[i, 'basin'] = _edges.loc[area_code_to_edge[row['area_code']], 'basin']
+            except KeyError:
+                pass
     
-    # update some other basin areas columns
+    # update basin areas based on (updated) areas
+    basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=["area"])
+    basin_areas["basin"] = basin_areas["basin"].astype(int)
     basin_areas["area_ha"] = basin_areas.geometry.area / 10000.0
     basin_areas["color_no"] = basin_areas.index % 50
+    
+    if len(areas.loc[areas['basin'].isna()]) > 0:
+        print(f" - not all unassigned areas could be assigned automatically ({areas.loc[areas['basin'].isna()]}x remaining). Please inspect manually")
+
+    to_return['areas'] = areas.copy()
+    to_return['basin_areas'] = basin_areas.copy()
+
     print(f" - updated basin areas and areas")
 
-    return basin_areas, areas
+    return to_return
