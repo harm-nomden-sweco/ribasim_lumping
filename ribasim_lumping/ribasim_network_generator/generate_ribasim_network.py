@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import networkx as nx
-from shapely.geometry import Point, LineString, Polygon, MultiPolygon
+from shapely.geometry import Point, LineString, Polygon, MultiPolygon, GeometryCollection
 
 
 def create_graph_based_on_nodes_edges(
@@ -234,7 +234,7 @@ def create_basin_areas_based_on_drainage_unit_areas(
         areas.geometry = areas.make_valid()
         # due to make_valid() GeometryCollections can be generated. Only take the (multi)polygon from those collections
         areas.geometry = [[g for g in gs.geoms if (isinstance(g, Polygon) or isinstance(g, MultiPolygon))][0] 
-                        if hasattr(gs, 'geoms') 
+                        if isinstance(gs, GeometryCollection) 
                         else gs
                         for gs in areas.geometry]
         # spatial join edges to areas that intersect
@@ -813,7 +813,6 @@ def check_basins_connected_to_basin_areas(basins: gpd.GeoDataFrame, basin_areas:
                 print('   - Following basins are not connected to a basin area (either due to incorrect network input or multiple basins in the same basin area):')
                 check = False
             print(f'      Basin {b}')
-
 
 
 def generate_ribasim_network_using_split_nodes(
