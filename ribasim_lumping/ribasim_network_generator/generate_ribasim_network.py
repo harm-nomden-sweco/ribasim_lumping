@@ -396,9 +396,10 @@ def create_basin_connections(
     """
     
     conn = split_nodes.rename(columns={"geometry": "geom_split_node"})
-    # check if split_node is used (split_type)
  
-    conn = conn[conn["split_type"] != "no_split"]
+    # check if split_node is used (split_type) or is a hard cut
+    conn = conn[(conn["split_type"] != "no_split") & (conn["split_type"] != "harde_knip")]
+
     # use different approach for: 
     # (1) splitnodes that are structures and on an edge and 
     # (2) splitnodes that are original d-hydro nodes
@@ -487,7 +488,9 @@ def create_boundary_connections(
     """
 
     print(f" - create Ribasim-Edges between Boundaries and Basins")
-    split_nodes = split_nodes.copy()  # copy to make sure gdf variable is not linked
+    _split_nodes = split_nodes[(split_nodes["split_type"] != "no_split") & (split_nodes["split_type"] != "harde_knip")]
+    _split_nodes_extra = split_nodes[(split_nodes["split_type"] == "no_split") | (split_nodes["split_type"] == "harde_knip")]
+
     if boundaries is None or nodes is None or basins is None:
         return None, split_nodes
     
@@ -615,7 +618,7 @@ def create_boundary_connections(
     additional_split_nodes['split_node'] = -1
 
     split_nodes = gpd.GeoDataFrame(
-        pd.concat([split_nodes, additional_split_nodes]),
+        pd.concat([_split_nodes, _split_nodes_extra, additional_split_nodes]),
         geometry='geometry', 
         crs=split_nodes.crs
     )

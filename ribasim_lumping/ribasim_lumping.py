@@ -129,6 +129,7 @@ class RibasimLumpingNetwork(BaseModel):
     def add_basis_network(
             self, 
             source_type: str,
+            set_name: str = None,
             dhydro_model_dir: Path = '.', 
             dhydro_simulation_name: str = 'default',
             dhydro_volume_tool_bat_file: Path = '.', 
@@ -157,6 +158,7 @@ class RibasimLumpingNetwork(BaseModel):
 
         Args:
             source_type (str):                          Source type of network. Options are "dhydro" or "hydamo"
+            set_name (str):                             Name of set of settings (e.g. summer/winter). Will be ignored in hydamo.
             dhydro_model_dir (Path):                    Directory path to D-HYDRO model
             dhydro_simulation_name (str):               Name of D-HYDRO model simulation
             dhydro_volume_tool_bat_file (Path):         Path to D-HYDRO volume tool batch file
@@ -182,7 +184,10 @@ class RibasimLumpingNetwork(BaseModel):
         """
         results = None
         if source_type == "dhydro":
+            if set_name is None or not isinstance(set_name, str):
+                raise ValueError("set_name for dhydro should be a string")
             results = add_dhydro_basis_network(
+                set_name=set_name,
                 model_dir=dhydro_model_dir,
                 simulation_name=dhydro_simulation_name,
                 volume_tool_bat_file=dhydro_volume_tool_bat_file, 
@@ -619,7 +624,17 @@ class RibasimLumpingNetwork(BaseModel):
             use_laterals_for_basin_area: bool = False,
             remove_isolated_basins: bool = False,
         ) -> Dict:
-        
+        """
+        Generate ribasim_lumping network. This function generates all 
+
+        Args:
+            simulation_code (str):              give name for ribasim-simulation
+            split_node_type_conversion (Dict):  dictionary general conversion of object-type to ribasim-type (e.g. weir: TabulatedRatingCurve)
+            split_node_id_conversion (Dict):    dictionary specific conversion of split-node-id to ribasim-type (e.g. KST01234: Outlet)
+            use_laterals_for_basin_area (bool): use standard lateral inflow per second per area applied to basin_areas.
+            remove_isolated_basins (bool):      
+        """
+        # first some checks
         self.simulation_code = simulation_code
         self.simulation_path = Path(self.results_dir, simulation_code)
         if self.split_nodes is None:
@@ -666,7 +681,7 @@ class RibasimLumpingNetwork(BaseModel):
             self.areas_gdf,
             self.basin_areas_gdf, 
             self.drainage_areas_gdf,
-            self.edges_gdf,
+            # self.edges_gdf,
         )
         self.areas_gdf = results['areas']
         self.basin_areas_gdf = results['basin_areas']
