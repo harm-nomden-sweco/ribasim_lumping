@@ -786,7 +786,9 @@ def assign_unassigned_areas_to_basin_areas(
     It will also include edges if they are provided as input
     """
     
-    areas, basin_areas, drainage_areas = areas.copy(), basin_areas.copy(), drainage_areas.copy()
+    areas = areas.copy()
+    basin_areas = basin_areas.copy()
+    drainage_areas = drainage_areas.copy() if drainage_areas is not None else None
 
     print("Assign unassigned areas to basin areas based on neighbouring basin areas within the same drainage area if possible")
     _areas = areas.loc[areas['basin'].isna()]
@@ -860,7 +862,7 @@ def assign_unassigned_areas_to_basin_areas(
 
         # update basin areas geometries
         areas.geometry = areas.make_valid()  # dissolve can fail because of incorrect geoms. fix those first
-        basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=["area"])
+        basin_areas = areas.dissolve(by="basin").reset_index()#.drop(columns=["area"])
         basin_areas["basin"] = basin_areas["basin"].astype(int)
 
         # update number of unassigned areas
@@ -909,7 +911,7 @@ def assign_unassigned_areas_to_basin_areas(
                 pass
     
     # update basin areas based on (updated) areas
-    basin_areas = areas.dissolve(by="basin").reset_index().drop(columns=["area"])
+    basin_areas = areas.dissolve(by="basin").reset_index()#.drop(columns=["area"])
     basin_areas["basin"] = basin_areas["basin"].astype(int)
     basin_areas["area_ha"] = basin_areas.geometry.area / 10000.0
     basin_areas["color_no"] = basin_areas.index % 50
