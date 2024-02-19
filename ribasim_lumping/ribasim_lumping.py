@@ -135,8 +135,14 @@ class RibasimLumpingNetwork(BaseModel):
             dhydro_volume_tool_bat_file: Path = '.', 
             dhydro_volume_tool_force: bool = False,
             dhydro_volume_tool_increment: float = 0.1,
-            hydamo_network_file: Path = 'network.gpkg',
-            hydamo_network_gpkg_layer: str = 'network',
+            hydamo_gpkg_file: Path = 'hydamo.gpkg',
+            hydamo_hydroobject_gpkg_layer: str = 'hydroobject',
+            hydamo_weir_gpkg_layer: str = 'stuw',
+            hydamo_culvertsiphon_gpkg_layer: str = 'duikersifonhevel',
+            hydamo_closing_gpkg_layer: str = 'afsluitmiddel',
+            hydamo_pumpingstation_gpkg_layer: str = 'gemaal',
+            hydamo_pump_gpkg_layer: str = 'pomp',
+            hydamo_sluice_gpkg_layer: str = 'sluis',
             ribasim_input_boundary_file: Path = 'boundary.gpkg',
             ribasim_input_boundary_gpkg_layer: str = 'boundary',
             ribasim_input_split_nodes_file: Path = 'split_nodes.gpkg',
@@ -152,8 +158,8 @@ class RibasimLumpingNetwork(BaseModel):
         If "dhydro", provide arguments for D-HYDRO volume tool (arguments dhydro_volume_*) and model simulation
         (model_dir, simulation_name). All necessary information (like boundaries and split nodes) will be derived from
         the D-HYDRO model data.
-        If "hydamo", provide arguments for paths to files containing network geometries (hydamo_network_file) and
-        in case of geopackage also the layer name (hydamo_network_gpkg_layer). HyDAMO does not contain information for
+        If "hydamo", provide arguments to geopackage hydamo file containing HyDAMO objects (hydamo_file) and 
+        the different geopackage layers for each HyDAMO object type. HyDAMO does not contain information for
         boundaries and split nodes, so these need to be provided additionally as Ribasim input.
 
         Args:
@@ -166,8 +172,14 @@ class RibasimLumpingNetwork(BaseModel):
                                                         volume in simulation results
             dhydro_volume_tool_increment (float):       Increment argument (in m) for D-HYDRO volume tool
             dhydro_volume_tool_bat_file (Path):         Path to D-HYDRO volume tool batch file
-            hydamo_network_file (str):                  Path to HyDAMO file containing network geometries
-            hydamo_network_gpkg_layer (str):            Layer name of HyDAMO network file in case it is a geopackage
+            hydamo_gpkg_file (str):                     Path to HyDAMO geopackage file containing HyDAMO objects in separate layers. Defaults to 'hydamo.gpkg'
+            hydamo_hydroobject_gpkg_layer (str):        Layer name in HyDAMO geopackage for hydroobject. Defaults to 'hydroobject'
+            hydamo_weir_gpkg_layer (str):               Layer name in HyDAMO geopackage for weirs. Defaults to 'stuw'
+            hydamo_culvertsiphon_gpkg_layer (str):      Layer name in HyDAMO geopackage for culverts and siphons. Defaults to 'duikersifonhevel'
+            hydamo_closing_gpkg_layer (str):            Layer name in HyDAMO geopackage for closings. Defaults to 'afsluitmiddel'
+            hydamo_pumpingstation_gpkg_layer (str):     Layer name in HyDAMO geopackage for pumping stations. Defaults to 'gemaal'
+            hydamo_pump_gpkg_layer (str):               Layer name in HyDAMO geopackage for pumps (which are part of a pumping station). Defaults to 'pomp'
+            hydamo_sluice_gpkg_layer (str):             Layer name in HyDAMO geopackage for sluices. Defaults to 'sluis'
             ribasim_input_boundary_file (str):          Path to file containing Ribasim input boundary geometries (additionally needed when using HyDAMO data)
             ribasim_input_boundary_gpkg_layer (str):    Layer name of Ribasim input boundary file in case it is a geopackage
             ribasim_input_split_nodes_file (str):       Path to file containing Ribasim input split nodes geometries (additionally needed when using HyDAMO data)
@@ -205,11 +217,18 @@ class RibasimLumpingNetwork(BaseModel):
         elif source_type == 'hydamo':
             # add network from HyDAMO files
             results = add_hydamo_basis_network(
-                hydamo_network_file=hydamo_network_file,
-                hydamo_network_gpkg_layer=hydamo_network_gpkg_layer,
+                hydamo_gpkg_file=hydamo_gpkg_file,
+                hydamo_hydroobject_gpkg_layer=hydamo_hydroobject_gpkg_layer,
+                hydamo_weir_gpkg_layer=hydamo_weir_gpkg_layer,
+                hydamo_culvertsiphon_gpkg_layer=hydamo_culvertsiphon_gpkg_layer,
+                hydamo_closing_gpkg_layer=hydamo_closing_gpkg_layer,
+                hydamo_pumpingstation_gpkg_layer=hydamo_pumpingstation_gpkg_layer,
+                hydamo_pump_gpkg_layer=hydamo_pump_gpkg_layer,
+                hydamo_sluice_gpkg_layer=hydamo_sluice_gpkg_layer,
             )
             if results is not None:
-                self.branches_gdf, self.edges_gdf, self.nodes_gdf = results
+                self.branches_gdf, self.weirs_gdf, self.culverts_gdf, \
+                self.pumps_gdf, self.edges_gdf, self.nodes_gdf = results
             
             # add Ribasim input boundaries and split nodes from files
             self.add_split_nodes_from_file(

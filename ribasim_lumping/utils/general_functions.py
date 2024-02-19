@@ -10,6 +10,7 @@ import pandas as pd
 from pydantic import BaseModel
 from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points, snap
+import fiona
 
 
 def replace_string_in_file(file_path, string, new_string):
@@ -262,14 +263,20 @@ def read_geom_file(
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Could not find file {os.path.abspath(filepath)}")
     if str(filepath).lower().endswith('.gpkg'):
-        gdf = gpd.read_file(filepath, layer=layer_name, crs=crs)
+        gpkg_layers = fiona.listlayers(filepath)
+        if layer_name in gpkg_layers:
+            gdf = gpd.read_file(filepath, layer=layer_name, crs=crs)
+        else:
+            print(f"Could not find layer {layer_name} in geopackage {os.path.abspath(filepath)}. Returning empty GeoDataFrame")
+            return gpd.GeoDataFrame()
     else:
         gdf = gpd.read_file(filepath, crs=crs)
-    if explode_geoms:
-        gdf = gdf.explode(ignore_index=True)  # explode to transform multi-part geoms to single
-    if remove_z_dim:
-        gdf.geometry = [Point(g.coords[0][:2]) if isinstance(g, Point) else LineString([c[:2] for c in g.coords])
-                        for g in gdf.geometry.values]  # remove possible Z dimension
+    if 'geometry' in gdf.columns:
+        if explode_geoms:
+            gdf = gdf.explode(ignore_index=True)  # explode to transform multi-part geoms to single
+        if remove_z_dim:
+            gdf.geometry = [Point(g.coords[0][:2]) if isinstance(g, Point) else LineString([c[:2] for c in g.coords])
+                            for g in gdf.geometry.values]  # remove possible Z dimension
     return gdf
 
 
