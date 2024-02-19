@@ -850,6 +850,7 @@ def assign_unassigned_areas_to_basin_areas(
                     lengths = [areas.loc[k, 'geometry'].intersection(basin_areas.loc[basin_areas['basin'] == b, 'geometry']).length.values[0] for b in bs]
                 except KeyError:
                     # in this case the area is not overlapping a drainage area
+                    bs = v
                     lengths = [areas.loc[k, 'geometry'].intersection(basin_areas.loc[basin_areas['basin'] == b, 'geometry']).length.values[0] for b in v]
                 except ValueError:
                     continue
