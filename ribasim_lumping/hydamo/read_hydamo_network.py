@@ -1,15 +1,21 @@
 from pathlib import Path
-from ..utils.general_functions import read_geom_file, generate_nodes_from_edges
+from ..utils.general_functions import read_geom_file, generate_nodes_from_edges, split_edges_by_dx
 from shapely.geometry import LineString, Point
 from typing import Tuple
 import geopandas as gpd
+import pandas as pd
 
 
 def add_hydamo_basis_network(
     hydamo_network_file: Path = 'network.gpkg',
-    hydamo_network_gpkg_layer: str = None,
+    hydamo_split_network_dx: float = None,
     crs: int = 28992,
-) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
+):
+    # ) -> Tuple[
+    #     gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, 
+    #     gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame, 
+    #     gpd.GeoDataFrame, gpd.GeoDataFrame
+    # ]:
     """
     Load network data from HyDAMO files
 
@@ -25,14 +31,52 @@ def add_hydamo_basis_network(
     print('Reading network from HyDAMO files...')
     branches_gdf = read_geom_file(
         filepath=hydamo_network_file, 
-        layer_name=hydamo_network_gpkg_layer, 
+        layer_name="hydroobject", 
         crs=crs, 
         remove_z_dim=True
-    )
+    ).rename(columns={'code': 'branch_id'})[['branch_id', 'geometry']]
+    branches_gdf, network_nodes_gdf = generate_nodes_from_edges(branches_gdf)
 
-    # Edges are the same as branches in HyDAMO
-    edges_gdf = branches_gdf.copy()
-    edges_gdf = edges_gdf.rename(columns={'code': 'branch_id'})[['branch_id', 'geometry']]
+    # Split up hydamo edges with given distance as approximate length of new edges
+    if hydamo_split_network_dx is None:
+        edges_gdf = branches_gdf.copy().rename(columns={"branch_id": "edge_id"})
+    else:
+        edges_gdf = split_edges_by_dx(
+            edges=branches_gdf, 
+            dx=hydamo_split_network_dx,
+        )
     edges_gdf, nodes_gdf = generate_nodes_from_edges(edges_gdf)
+    edges_gdf.index.name = "index"
 
-    return branches_gdf, edges_gdf, nodes_gdf
+    # Read structures and data according to hydamo-format
+    weirs_gdf, culverts_gdf, pumps_gdf, sluices_gdf, closers_gdf = None, None, None, None, None
+    
+    pumps_gdf = read_geom_file(
+        filepath=hydamo_network_file,
+        layer_name="gemaal",
+        crs=crs
+    )
+    sluices_gdf = read_geom_file(
+        filepath=hydamo_network_file,
+        layer_name="sluis",
+        crs=crs
+    )
+    weirs_gdf  = read_geom_file(
+        filepath=hydamo_network_file,
+        layer_name="stuw",
+        crs=crs
+    )
+    culverts_gdf  = read_geom_file(
+        filepath=hydamo_network_file,
+        layer_name="duikersifonhevel",
+        crs=crs
+    )
+    closers_gdf = read_geom_file(
+        filepath=hydamo_network_file,
+        layer_name="afsluitmiddel",
+        crs=crs
+    )
+    pumps_df = gpd.read_file(hydamo_network_file, layer="pomp")
+
+    return branches_gdf, network_nodes_gdf, edges_gdf, nodes_gdf, weirs_gdf, culverts_gdf, pumps_gdf, pumps_df, sluices_gdf, closers_gdf
+

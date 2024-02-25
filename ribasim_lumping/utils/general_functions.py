@@ -319,7 +319,7 @@ def generate_nodes_from_edges(
 
     print('Generate nodes from edges...')
     edges['edge_no'] = range(len(edges))
-    edges.index = edges['edge_no']
+    edges.index = edges['edge_no'].values
 
     # Generate nodes from edges and include extra information in edges
     edges[["from_node", "to_node"]] = [[g.coords[0], g.coords[-1]] for g in edges.geometry]  # generate endpoints
@@ -711,6 +711,9 @@ def split_edges_by_dx(
     edges_new = gpd.GeoDataFrame(pd.concat([edges_new, edges_to_add], ignore_index=True))
     if 'edge_no' in edges_new.columns:
         edges_new['edge_no'] = np.arange(len(edges_new))
+    
+    if "branch_id" in edges_new.columns:
+        edges_new = edges_new.rename(columns={"branch_id": "edge_id"})
     return edges_new
 
 

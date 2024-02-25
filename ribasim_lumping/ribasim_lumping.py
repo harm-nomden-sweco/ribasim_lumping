@@ -23,8 +23,7 @@ from .utils.general_functions import (
     snap_to_network, 
     split_edges_by_split_nodes,
     log_and_remove_duplicate_geoms,
-    assign_unassigned_areas_to_basin_areas,
-    split_edges_by_dx,
+    assign_unassigned_areas_to_basin_areas
 )
 from .dhydro.read_dhydro_simulations import add_dhydro_basis_network, add_dhydro_simulation_data
 from .hydamo.read_hydamo_network import add_hydamo_basis_network
@@ -62,11 +61,14 @@ class RibasimLumpingNetwork(BaseModel):
     structures_gdf: gpd.GeoDataFrame = None
     stations_gdf: gpd.GeoDataFrame = None
     pumps_gdf: gpd.GeoDataFrame = None
+    pumps_df: pd.DataFrame = None
     weirs_gdf: gpd.GeoDataFrame = None
     orifices_gdf: gpd.GeoDataFrame = None
     bridges_gdf: gpd.GeoDataFrame = None
     culverts_gdf: gpd.GeoDataFrame = None
     uniweirs_gdf: gpd.GeoDataFrame = None
+    sluices_gdf: gpd.GeoDataFrame = None
+    closers_gdf: gpd.GeoDataFrame = None
     boundaries_gdf: gpd.GeoDataFrame = None
     boundaries_data: pd.DataFrame = None
     boundaries_timeseries_data: pd.DataFrame = None
@@ -136,13 +138,12 @@ class RibasimLumpingNetwork(BaseModel):
             dhydro_volume_tool_force: bool = False,
             dhydro_volume_tool_increment: float = 0.1,
             hydamo_network_file: Path = 'network.gpkg',
-            hydamo_network_gpkg_layer: str = 'network',
-            ribasim_input_boundary_file: Path = 'boundary.gpkg',
-            ribasim_input_boundary_gpkg_layer: str = 'boundary',
-            ribasim_input_split_nodes_file: Path = 'split_nodes.gpkg',
-            ribasim_input_split_nodes_gpkg_layer: Path = 'split_nodes',
-            hydamo_split_nodes_bufdist: float = 10.0,
-            hydamo_boundary_bufdist: float = 10.0,
+            # ribasim_input_boundary_file: Path = 'boundary.gpkg',
+            # ribasim_input_boundary_gpkg_layer: str = 'boundary',
+            # ribasim_input_split_nodes_file: Path = 'split_nodes.gpkg',
+            # ribasim_input_split_nodes_gpkg_layer: Path = 'split_nodes',
+            # hydamo_split_nodes_bufdist: float = 10.0,
+            # hydamo_boundary_bufdist: float = 10.0,
             hydamo_write_results_to_gpkg: bool = False,
             hydamo_split_network_dx: float = None,
         ) -> Tuple[gpd.GeoDataFrame]:
@@ -206,81 +207,13 @@ class RibasimLumpingNetwork(BaseModel):
             # add network from HyDAMO files
             results = add_hydamo_basis_network(
                 hydamo_network_file=hydamo_network_file,
-                hydamo_network_gpkg_layer=hydamo_network_gpkg_layer,
+                hydamo_split_network_dx=hydamo_split_network_dx
             )
             if results is not None:
-                self.branches_gdf, self.edges_gdf, self.nodes_gdf = results
+                self.branches_gdf, self.network_nodes_gdf, self.edges_gdf, self.nodes_gdf, \
+                    self.weirs_gdf, self.culverts_gdf, self.pumps_gdf, \
+                    self.pumps_df, self.sluices_gdf, self.closers_gdf = results
             
-            # add Ribasim input boundaries and split nodes from files
-            self.add_split_nodes_from_file(
-                split_nodes_file_path=ribasim_input_split_nodes_file,
-                layer_name=ribasim_input_split_nodes_gpkg_layer,
-            )
-            self.add_boundaries_from_file(
-                boundary_file_path=ribasim_input_boundary_file,
-                layer_name=ribasim_input_boundary_gpkg_layer,
-            )
-            
-            # Split up hydamo edges with given distance as approximate length of new edges
-            if hydamo_split_network_dx is not None:
-                self.edges_gdf = split_edges_by_dx(
-                    edges=self.edges_gdf, 
-                    dx=hydamo_split_network_dx,
-                )
-
-            # Because the split node and boundary locations won't always nicely match up with HyDAMO network, we need to adjust this
-            # by snapping split nodes and boundaries to network nodes/edges
-            self.split_nodes = snap_to_network(
-                snap_type='split_node',
-                points=self.split_nodes, 
-                edges=self.edges_gdf, 
-                nodes=self.nodes_gdf, 
-                buffer_distance=hydamo_split_nodes_bufdist,
-            )  
-            self.boundaries_gdf = snap_to_network(
-                snap_type='boundary',
-                points=self.boundaries_gdf, 
-                edges=self.edges_gdf, 
-                nodes=self.nodes_gdf, 
-                buffer_distance=hydamo_boundary_bufdist,
-            )
-
-            # split edges by split node locations so we end up with an network where split nodes are only located on nodes (and not edges)
-            self.split_nodes, self.edges_gdf, self.nodes_gdf = split_edges_by_split_nodes(
-                self.split_nodes, 
-                self.edges_gdf, 
-                buffer_distance=0.1,  # some small buffer to be sure but should actually not be necessary because of previous snap actions
-            )
-
-            # reset indexes of gdfs, rename some columns and do some automatic corrections
-            for gdf in [self.split_nodes, self.edges_gdf, self.nodes_gdf, self.boundaries_gdf]:
-                gdf.reset_index(drop=True, inplace=True)
-                gdf.rename(columns={'split_type': 'object_type', 'Type': 'quantity', 'boundary_id': 'boundary', 'branch_id': 'code'}, inplace=True)
-            if 'split_node' not in self.split_nodes.columns:
-                self.split_nodes['split_node'] = self.split_nodes.index
-            if 'quantity' in self.boundaries_gdf.columns:
-                self.boundaries_gdf['quantity'] = self.boundaries_gdf['quantity'].replace({'FlowBoundary': 'dischargebnd', 'LevelBoundary': 'waterlevelbnd'})
-            else:
-                self.boundaries_gdf['quantity'] = 'waterlevelbnd'  # add default bnd type if not present in gdf
-            
-            # remove non-snapped split nodes and boundaries
-            split_nodes_not_on_network = self.split_nodes.loc[(self.split_nodes['edge_no'] == -1) & (self.split_nodes['node_no'] == -1)]
-            print(f"Remove non-snapped split nodes from dataset ({len(split_nodes_not_on_network)})")
-            self.split_nodes = self.split_nodes.loc[[i not in split_nodes_not_on_network.index for i in self.split_nodes.index]]
-            boundaries_not_on_network = self.boundaries_gdf.loc[self.boundaries_gdf['node_no'] == -1]
-            print(f"Remove non-snapped boundaries from dataset ({len(boundaries_not_on_network)})")
-            self.boundaries_gdf = self.boundaries_gdf.loc[[i not in boundaries_not_on_network.index for i in self.boundaries_gdf.index]]
-
-            if hydamo_write_results_to_gpkg:
-                self.split_nodes.to_file(Path(self.results_dir, 'split_nodes.gpkg'), layer='split_nodes', index=False)
-                split_nodes_not_on_network.to_file(Path(self.results_dir, 'split_nodes_not_on_network.gpkg'), layer='split_nodes', index=False)
-                self.edges_gdf.to_file(Path(self.results_dir, 'edges.gpkg'), layer='edges', index=False)
-                self.nodes_gdf.to_file(Path(self.results_dir, 'nodes.gpkg'), layer='nodes', index=False)
-                self.boundaries_gdf.to_file(Path(self.results_dir, 'boundaries.gpkg'), layer='boundaries', index=False)
-                boundaries_not_on_network.to_file(Path(self.results_dir, 'boundaries_not_on_network.gpkg'), layer='boundaries', index=False)
-        else:
-            raise ValueError(f'Unknown source_type {source_type}. Only "dhydro" and "hydamo" are allowed')
-        
         self.basis_source_types.append(source_type)
 
         return results
@@ -390,7 +323,8 @@ class RibasimLumpingNetwork(BaseModel):
             self, 
             boundary_file_path: Path,
             layer_name: str = None,
-            crs: int = 28992
+            crs: int = 28992,
+            buffer_distance: float = 10.0
         ):
         """
         Add Ribasim boundaries from file. In case of geopackage, provide layer_name. 
@@ -409,6 +343,26 @@ class RibasimLumpingNetwork(BaseModel):
             remove_z_dim=True
         )
         self.boundaries_gdf = log_and_remove_duplicate_geoms(self.boundaries_gdf, colname='boundary_id')
+
+        # Because the split node and boundary locations won't always nicely match up with HyDAMO network, we need to adjust this
+        # by snapping split nodes and boundaries to network nodes/edges
+        self.boundaries_gdf = snap_to_network(
+            snap_type='boundary',
+            points=self.boundaries_gdf, 
+            edges=self.edges_gdf, 
+            nodes=self.nodes_gdf, 
+            buffer_distance=buffer_distance,
+        )
+
+        self.boundaries_gdf = self.boundaries_gdf.rename(columns={"boundary_id": "boundary", "type": "quantity"})
+        if 'quantity' in self.boundaries_gdf.columns:
+            self.boundaries_gdf['quantity'] = self.boundaries_gdf['quantity'].replace({'FlowBoundary': 'dischargebnd', 'LevelBoundary': 'waterlevelbnd'})
+        else:
+            self.boundaries_gdf['quantity'] = 'waterlevelbnd'  # add default bnd type if not present in gdf
+        boundaries_not_on_network = self.boundaries_gdf.loc[self.boundaries_gdf['node_no'] == -1]
+        print(f"Remove non-snapped boundaries from dataset ({len(boundaries_not_on_network)})")
+        self.boundaries_gdf = self.boundaries_gdf.loc[[i not in boundaries_not_on_network.index for i in self.boundaries_gdf.index]]
+    
     
     def read_areas_laterals_timeseries(
             self, 
@@ -545,7 +499,8 @@ class RibasimLumpingNetwork(BaseModel):
             self, 
             split_nodes_file_path: Path, 
             layer_name: str = None, 
-            crs: int = 28992
+            crs: int = 28992,
+            buffer_distance: float = 10.0
         ):
         """
         Add split nodes in network object from file. Overwrites previously defined split nodes
@@ -556,13 +511,104 @@ class RibasimLumpingNetwork(BaseModel):
             crs (int):                      (optional) CRS EPSG code. Default 28992 (RD New) 
         """
         print('Reading split nodes from file...')
-        self.split_nodes = read_geom_file(
+        split_nodes = read_geom_file(
             filepath=split_nodes_file_path, 
             layer_name=layer_name, 
             crs=crs,
             remove_z_dim=True    
         )
-        self.split_nodes = log_and_remove_duplicate_geoms(self.split_nodes, colname='split_node')
+        split_nodes_columns = ["split_node", "split_node_id", "object_type", "object_function", "geometry"]
+        split_nodes = split_nodes.drop(columns=[c for c in split_nodes.columns if c not in split_nodes_columns])
+        split_nodes = log_and_remove_duplicate_geoms(split_nodes, colname='split_node')
+        
+        # check whether new split_nodes without split_type and split_node_id are included.
+        old_split_nodes = split_nodes[(~split_nodes["split_node_id"].isna()) & (split_nodes["object_type"] != "")]
+        new_split_nodes = split_nodes[~((~split_nodes["split_node_id"].isna()) & (split_nodes["object_type"] != ""))]
+
+        if new_split_nodes.empty:
+            self.split_nodes = old_split_nodes
+            if 'split_node' not in self.split_nodes.columns:
+                self.split_nodes['split_node'] = self.split_nodes.index
+            return self.split_nodes
+
+        if "dhydro" in self.basis_source_types:
+            gdf_names = ["pump", "weir", "uniweir", "orifice", "culvert", "openwater"]
+            gdfs = [self.pumps_gdf, self.weirs_gdf, self.uniweirs_gdf, self.culverts_gdf, None]
+        elif "hydamo" in self.basis_source_types:
+            gdf_names = ["gemaal", "sluis", "stuw", "duikersifonhevel", "openwater"]
+            gdfs = [self.pumps_gdf, self.sluices_gdf, self.weirs_gdf, self.culverts_gdf, None]
+        else:
+            raise ValueError("")
+        
+        hydamo_objects = gpd.GeoDataFrame()
+        for gdf_name, gdf in zip(gdf_names, gdfs):
+            if gdf is not None and not gdf.empty:
+                gdf["object_type"] = gdf_name
+                hydamo_objects = pd.concat([hydamo_objects, gdf[["code", "object_type", "geometry"]]])
+
+        hydamo_objects.object_type = pd.Categorical(
+            hydamo_objects.object_type, 
+            categories=gdf_names, 
+            ordered=True
+        )
+        hydamo_objects = hydamo_objects.sort_values('object_type')
+        hydamo_objects_buffer = hydamo_objects[["object_type", "code", "geometry"]].rename(columns={"code": "split_node_id"})
+        hydamo_objects_buffer.geometry=hydamo_objects_buffer.geometry.buffer(0.001)
+
+        new_split_nodes = gpd.sjoin(
+            new_split_nodes[["geometry"]], 
+            hydamo_objects_buffer,
+            how='left'
+        ).drop(columns=["index_right"])
+
+        split_nodes = pd.concat([old_split_nodes, new_split_nodes]).sort_values(by=["split_node", "object_type"])
+        split_nodes["object_type"] = split_nodes["object_type"].fillna("openwater")
+
+        non_open_water_no_id = split_nodes[~split_nodes["split_node_id"].isnull()]
+        open_water_no_id = split_nodes[split_nodes["split_node_id"].isnull()]
+        open_water_no_id = gpd.sjoin(
+            open_water_no_id,
+            self.edges_gdf[["edge_id", "edge_no", "from_node", "to_node", "geometry"]],
+            how="left"
+        )
+        open_water_no_id["split_node_id"] = open_water_no_id["edge_id"]
+        split_nodes = pd.concat([non_open_water_no_id, open_water_no_id])
+
+        split_nodes = split_nodes.reset_index(drop=True)
+        split_nodes["split_node"] = split_nodes.index + 1
+
+        self.split_nodes = split_nodes.copy()
+
+        # Because the split node and boundary locations won't always nicely match up with HyDAMO network, we need to adjust this
+        # by snapping split nodes and boundaries to network nodes/edges
+        self.split_nodes = snap_to_network(
+            snap_type='split_node',
+            points=self.split_nodes, 
+            edges=self.edges_gdf, 
+            nodes=self.nodes_gdf, 
+            buffer_distance=buffer_distance,
+        )
+        
+        # split edges by split node locations so we end up with an network where split nodes are only located on nodes (and not edges)
+        self.split_nodes, self.edges_gdf, self.nodes_gdf = split_edges_by_split_nodes(
+            self.split_nodes, 
+            self.edges_gdf, 
+            buffer_distance=0.1,  # some small buffer to be sure but should actually not be necessary because of previous snap actions
+        )
+        if 'split_node' not in self.split_nodes.columns:
+            self.split_nodes['split_node'] = self.split_nodes.index
+        
+        # remove non-snapped split nodes and boundaries
+        split_nodes_not_on_network = self.split_nodes.loc[
+            (self.split_nodes['edge_no'] == -1) & 
+            (self.split_nodes['node_no'] == -1)
+        ]
+        print(f"Remove non-snapped split nodes from dataset ({len(split_nodes_not_on_network)})")
+        self.split_nodes = self.split_nodes.loc[
+            [i not in split_nodes_not_on_network.index for i in self.split_nodes.index]
+        ]
+        return self.split_nodes
+    
 
     def set_split_nodes(self, split_nodes_gdf: gpd.GeoDataFrame):
         """

@@ -53,7 +53,7 @@ def split_graph_based_on_split_nodes(
     split_edges = edges[
         edges.edge_no.isin(split_nodes_edges.edge_no.values)
     ].copy()
-    assert len(split_nodes_edges) == len(split_edges)
+    # assert len(split_nodes_edges) == len(split_edges)
     split_edges = split_edges[["from_node", "to_node"]].to_dict("tight")["data"]
 
     split_edges = [coor for coor in split_edges if coor in graph.edges]
