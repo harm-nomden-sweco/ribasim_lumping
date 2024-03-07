@@ -294,7 +294,7 @@ class RibasimLumpingNetwork(BaseModel):
             layer_name=layer_name, 
             crs=crs
         )
-        print(f" - drainage areas ({len(self.drainage_areas_gdf)}x)")
+        print(f" - drainage areas ({len(self.drainage_areas_gdf) if self.drainage_areas_gdf is not None else 0}x)")
 
     def add_supply_areas_from_file(
             self, 
@@ -527,7 +527,7 @@ class RibasimLumpingNetwork(BaseModel):
 
         if new_split_nodes.empty:
             self.split_nodes = old_split_nodes
-            if 'split_node' not in self.split_nodes.columns:
+            if 'split_node' not in self.split_nodes.columns or self.split_nodes.split_node.isna().any():
                 self.split_nodes['split_node'] = self.split_nodes.index
             return self.split_nodes
 
@@ -535,8 +535,8 @@ class RibasimLumpingNetwork(BaseModel):
             gdf_names = ["pump", "weir", "uniweir", "orifice", "culvert", "openwater"]
             gdfs = [self.pumps_gdf, self.weirs_gdf, self.uniweirs_gdf, self.culverts_gdf, None]
         elif "hydamo" in self.basis_source_types:
-            gdf_names = ["gemaal", "sluis", "stuw", "duikersifonhevel", "openwater"]
-            gdfs = [self.pumps_gdf, self.sluices_gdf, self.weirs_gdf, self.culverts_gdf, None]
+            gdf_names = ["gemaal", "sluis", "stuw", "duikersifonhevel", "afsluitmiddel", "openwater"]
+            gdfs = [self.pumps_gdf, self.sluices_gdf, self.weirs_gdf, self.culverts_gdf, self.closers_gdf, None]
         else:
             raise ValueError("")
         
@@ -595,7 +595,7 @@ class RibasimLumpingNetwork(BaseModel):
             self.edges_gdf, 
             buffer_distance=0.1,  # some small buffer to be sure but should actually not be necessary because of previous snap actions
         )
-        if 'split_node' not in self.split_nodes.columns:
+        if 'split_node' not in self.split_nodes.columns or self.split_nodes.split_node.isna().any():
             self.split_nodes['split_node'] = self.split_nodes.index
         
         # remove non-snapped split nodes and boundaries

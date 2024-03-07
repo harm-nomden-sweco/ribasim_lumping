@@ -48,6 +48,8 @@ def split_graph_based_on_split_nodes(
     # TODO: although edge stuff below works, it is actually better to split network at split nodes at earlier stage
     #       this will result in all edge no being -1 and only values for node no. so maybe check on that all edge_no
     #       values need to be -1 should be better.
+    if "edge_no" not in split_nodes.columns:
+        split_nodes["edge_no"] = -1
     split_nodes_edges = split_nodes[split_nodes.edge_no != -1].copy()
 
     split_edges = edges[
@@ -82,6 +84,8 @@ def split_graph_based_on_split_nodes(
     split_nodes.loc[split_nodes_edges.index, 'graph_node_no'] = pd.Series(new_graph_node_no, index=split_nodes_edges.index, dtype=object)
 
     # split_node: delete node and delete x edges, create x nodes, create x edges
+    if "node_no" not in split_nodes.columns:
+        split_nodes["node_no"] = -1
     split_nodes_nodes = split_nodes[split_nodes.node_no != -1]
     new_graph_node_no = []
     for split_node_id in split_nodes_nodes.node_no.values:

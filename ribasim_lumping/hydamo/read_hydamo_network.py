@@ -4,6 +4,7 @@ from shapely.geometry import LineString, Point
 from typing import Tuple
 import geopandas as gpd
 import pandas as pd
+import fiona
 
 
 def add_hydamo_basis_network(
@@ -76,7 +77,10 @@ def add_hydamo_basis_network(
         layer_name="afsluitmiddel",
         crs=crs
     )
-    pumps_df = gpd.read_file(hydamo_network_file, layer="pomp")
+    if "pomp" in fiona.listlayers(hydamo_network_file):
+        pumps_df = gpd.read_file(hydamo_network_file, layer="pomp")
+    else:
+        pumps_df = None
 
     return branches_gdf, network_nodes_gdf, edges_gdf, nodes_gdf, weirs_gdf, culverts_gdf, pumps_gdf, pumps_df, sluices_gdf, closers_gdf
 

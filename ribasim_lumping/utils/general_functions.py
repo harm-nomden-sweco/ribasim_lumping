@@ -3,6 +3,7 @@ from typing import Dict, List, Tuple, Union
 import os
 from collections import OrderedDict
 from pathlib import Path
+import fiona
 
 import geopandas as gpd
 import numpy as np
@@ -262,6 +263,8 @@ def read_geom_file(
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Could not find file {os.path.abspath(filepath)}")
     if str(filepath).lower().endswith('.gpkg'):
+        if layer_name not in fiona.listlayers(filepath):
+            return None
         gdf = gpd.read_file(filepath, layer=layer_name, crs=crs)
     else:
         gdf = gpd.read_file(filepath, crs=crs)
