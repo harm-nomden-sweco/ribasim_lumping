@@ -67,7 +67,7 @@ def get_inflow_outflow_edge_data(ribasim_model: ribasim.Model):
     node_df = ribasim_model.network.node.df
     edge_df = ribasim_model.network.edge.df
 
-    basin_nos = ribasim_model.network.node.df[ribasim_model.network.node.df["type"]=="Basin"].index.values
+    basin_nos = ribasim_model.network.node.df[ribasim_model.network.node.df["node_type"]=="Basin"].index.values
     flow_edge = edge_df[edge_df.edge_type=="flow"]
     flow_edge = flow_edge[
         (flow_edge.to_node_id.isin(basin_nos)) | 
@@ -192,13 +192,11 @@ def get_ribasim_basin_data_from_model(
              .set_index("time"))
     outflow = (model_flow
                [model_flow["from_node_id"]==basin_no]
-               .drop(columns=["from_node_id", "edge_id"])
-               .set_index(["to_node_id", "time"])
+               .set_index(["to_node_id", "time"])[["flow_rate"]]
                .sort_index())
     inflow = (model_flow
               [model_flow["to_node_id"]==basin_no]
-              .drop(columns=["to_node_id", "edge_id"])
-              .set_index(["from_node_id", "time"])
+              .set_index(["from_node_id", "time"])[["flow_rate"]]
               .sort_index())
     basin_flow = (model_basin_flow.reset_index()
                   [model_basin_flow.reset_index().node_id==basin_no]
@@ -313,18 +311,10 @@ def plot_results_basin_ribasim_model(
     # storage
     ax1 = fig.add_subplot(421)
     ax1.set_title(f"{basin_name} ({basin_no})", fontsize=15)
-    ax1.hlines(
-        y=basin_results.basin_profile['level'].min(), 
-        xmin=xmin, 
-        xmax=xmax, 
-        linestyle="-", 
-        color='black'
-    )
     basin.level.interpolate().rename(f"Level").plot(ax=ax1, style="-o", markersize=2)
 
     # level
     ax2 = fig.add_subplot(423, sharex=ax1)
-    ax2.hlines(y=0.0, xmin=xmin, xmax=xmax, linestyle="-", color='black', label=None)
     basin.storage.interpolate().rename(f"Storage").plot(ax=ax2, style="-o", markersize=2)
     if control_storage is not None:
         ax1.hlines(
@@ -337,14 +327,14 @@ def plot_results_basin_ribasim_model(
     ax3.hlines(
         y=0.0, xmin=xmin, xmax=xmax, linestyle="-", color='black'
     )
-    basin.flow.rename(f"Drainage+infiltration").plot(ax=ax3, style="-o", markersize=2)
+    basin.flow_rate.rename(f"Drainage+infiltration").plot(ax=ax3, style="-o", markersize=2)
     for i, inflow_edge in basin_results.inflow_edge.iterrows():
         from_node_id = inflow_edge["from_node_id"]
         from_node_name = inflow_edge["from_node_name"]
         source_node_id = inflow_edge["source_node_id"]
         source_name = inflow_edge["source_name"]
         (total_inflow.loc[from_node_id]
-         .flow.rename(f"Inflow from {source_name} ({source_node_id}) via {from_node_name} ({from_node_id})")
+         .flow_rate.rename(f"Inflow from {source_name} ({source_node_id}) via {from_node_name} ({from_node_id})")
          .plot(ax=ax3, 
             #    drawstyle="steps-post", 
                style="-o", 
@@ -355,45 +345,11 @@ def plot_results_basin_ribasim_model(
         target_node_id = outflow_edge["target_node_id"]
         target_name = outflow_edge["target_name"]
         (total_outflow.loc[to_node_id]
-         .flow.rename(f"Outflow to {target_name} ({target_node_id}) via {to_node_name} ({to_node_id})")
+         .flow_rate.rename(f"Outflow to {target_name} ({target_node_id}) via {to_node_name} ({to_node_id})")
          .plot(ax=ax3, 
             #    drawstyle="steps-post", 
                style="-o", 
                markersize=3))
-
-    ax4 = fig.add_subplot(443, sharey=ax1)
-    for i, outflow_edge in basin_results.outflow_edge.iterrows():
-        to_node_id = outflow_edge["to_node_id"]
-        q_h_relation = (basin_results.outflow.loc[to_node_id][["flow"]]
-                        .merge(basin_results.basin[["level"]], how="inner", left_index=True, right_index=True))
-        ax4.plot(q_h_relation.flow, q_h_relation.level, "o", markersize=3)
-    ax4.hlines(
-        y=basin_results.basin_profile.level.min(), 
-        xmin=0.0, xmax=basin_results.outflow.max().values*1.1, linestyle="-", color='black'
-    )
-    ax4.set_title(f"Q-H relation", fontsize=10)
-    ax4.set_xlim([0.0, basin_results.outflow.max().values*1.1])
-
-    ax5 = fig.add_subplot(444, sharey=ax1)
-    basin_profile = pd.concat([
-        pd.DataFrame(
-            dict(
-                level=[basin_results.basin_profile.level.min()], 
-                area=[0.0], 
-                remarks=[""]
-            ), 
-            index=[0]
-        ), 
-        basin_results.basin_profile
-    ]).reset_index(drop=True)
-    basin_profile.area = basin_profile.area/10_000
-    basin_profile.set_index("area").level.rename('H-A relation').plot(ax=ax5, style='o', markersize=3)
-    ax5.hlines(
-        y=basin_results.basin_profile['level'].min(), 
-        xmin=0.0, xmax=basin_profile.area.max()*1.1, linestyle="-", color='black'
-    )
-    ax5.set_title(f"A-H relation", fontsize=10)
-    ax5.set_xlim([0.0, basin_profile.area.max()*1.1])
 
     # control levels
     if control_level is not None:
@@ -414,34 +370,13 @@ def plot_results_basin_ribasim_model(
                 color='grey', 
                 label=f'Control level {node_name} ({controlled_node_id})'
             )
-            ax4.hlines(
-                y=clevel["greater_than"], 
-                xmin=0.0, 
-                xmax=basin_results.outflow.max()*1.1, 
-                linestyle="--", 
-                color='grey', 
-                label=f'Control level {node_name} ({controlled_node_id})'
-            )
-            ax5.hlines(
-                y=clevel["greater_than"], 
-                xmin=0.0, 
-                xmax=basin_profile.area.max()*1.1, 
-                linestyle="--", 
-                color='grey', 
-                label=f'Control level {node_name} ({controlled_node_id})'
-            )
 
     for ax in [ax1, ax2, ax3]:
-        ax.legend(fontsize=8)
-        # ax.set_xlim([xmin, xmax])
-        # ax.set_xticklabels(ax3.get_xticks(), rotation=0, ha='center')
-        # if (xmax-xmin).days < 5.0:
-        #     ax.xaxis.set_major_formatter(mdates.DateFormatter('%b-%d\n %H:%M'))
-        # elif (xmax-xmin).days < 90.0:
-        #     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        # elif (xmax-xmin).days < 365.0*5.0:
-        #     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
         ax.grid(color='lightgrey', linewidth=0.5)
+
+    ax1.legend(loc='center left', bbox_to_anchor=(1.1, 0.5), fontsize=8)
+    ax2.legend(loc='center left', bbox_to_anchor=(1.1, 0.5), fontsize=8)
+    ax3.legend(loc='center left', bbox_to_anchor=(1.1, 0.5), fontsize=8)
 
     ax1.set_ylabel('Level [mAD]')
     ax1.set_xlabel(None)
@@ -451,15 +386,5 @@ def plot_results_basin_ribasim_model(
     ax2.minorticks_off()
     ax3.set_ylabel('Flow [m3/s]')
     ax3.set_xlabel(None)
-    ax4.set_ylabel('Level [mAD]')
-    ax4.set_xlabel("Flow [m3/s]")
-    ax5.set_ylabel('Level [mAD]')
-    ax5.set_xlabel("Area [ha]")
-
-    # for ax in [ax1, ax2, ax3, ax4, ax5]:
-    #     ax.xaxis.set_tick_params(rotation=0)
-    #     ax.yaxis.set_tick_params(labelleft=True, rotation=0)
-    #     plt.setp(ax.get_xticklabels(), ha="center", fontsize=8)
-    #     plt.setp(ax.get_yticklabels(), fontsize=8)
         
-    return ribasim_model, ribasim_results, basin_results, fig, [ax1, ax2, ax3, ax4, ax5]
+    return ribasim_model, ribasim_results, basin_results, fig, [ax1, ax2, ax3] #, ax4, ax5]

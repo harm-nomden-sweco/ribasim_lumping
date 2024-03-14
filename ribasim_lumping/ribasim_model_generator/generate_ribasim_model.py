@@ -28,7 +28,7 @@ def generate_ribasim_nodes_static(
     )
     ribasim_nodes_static = ribasim_nodes_static.set_index("node_id")
     ribasim_nodes_static = ribasim_nodes_static[["ribasim_type", "name", "geometry"]]
-    ribasim_nodes_static = ribasim_nodes_static.rename(columns={"ribasim_type": "type"})
+    ribasim_nodes_static = ribasim_nodes_static.rename(columns={"ribasim_type": "node_type"})
 
     if ~ribasim_nodes_static.empty:
         ribasim_nodes = ribasim.Node(df=ribasim_nodes_static)
@@ -67,7 +67,8 @@ def generate_ribasim_basins(
     basin_profile: pd.DataFrame,
     basin_time: pd.DataFrame,
     basin_state: pd.DataFrame,
-    basin_subgrid: pd.DataFrame
+    basin_subgrid: pd.DataFrame,
+    basin_areas: gpd.GeoDataFrame
 ):
     """Generate settings for Ribasim Basins:
     static: node_id, drainage, potential_evaporation, infiltration, precipitation, urban_runoff
@@ -77,7 +78,14 @@ def generate_ribasim_basins(
         print(f"basins (--)", end="", flush=True)
         return ribasim.Basin()
     print(f"basins ({len(basin_state)}x)", end="", flush=True)
-    return ribasim.Basin(profile=basin_profile, time=basin_time, state=basin_state, subgrid=basin_subgrid)
+    ribasim_basins = ribasim.Basin(
+        profile=basin_profile, 
+        time=basin_time, 
+        state=basin_state, 
+        subgrid=basin_subgrid,
+        area=basin_areas
+    )
+    return ribasim_basins
 
 
 def generate_ribasim_level_boundaries(
@@ -173,7 +181,7 @@ def generate_pid_controls():
 
 
 def generate_users():
-    return ribasim.User()
+    return ribasim.UserDemand()
 
 
 def generate_allocations():
@@ -219,7 +227,8 @@ def generate_ribasim_model(
         basin_profile=tables['basin_profile'],
         basin_time=tables['basin_time'], 
         basin_state=tables['basin_state'],
-        basin_subgrid=tables['basin_subgrid']
+        basin_subgrid=tables['basin_subgrid'],
+        basin_areas=tables['basin_areas']
     )
 
     ribasim_level_boundaries = generate_ribasim_level_boundaries(
