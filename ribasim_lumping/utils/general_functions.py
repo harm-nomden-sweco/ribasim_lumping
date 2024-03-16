@@ -640,6 +640,7 @@ def split_edges_by_split_nodes(
 
     # update edge id column if present
     if 'edge_id' in edges.columns:
+        edges['edge_id'] = edges['edge_id'].fillna("dummy")
         n_max = np.max(np.unique(edges['edge_id'], return_counts=True)[1])  # max group size in groupby
         split_nrs = np.arange(start=1, stop=n_max+1)
         split_nrs = edges.groupby('edge_id')['from_node'].transform(lambda x: split_nrs[:len(x)])
