@@ -109,7 +109,7 @@ def get_basins_outflows_including_settings(split_nodes, basin_connections, bound
             [(set_name, "startlevelsuctionside") for set_name in set_names] + 
             [(set_name, "stoplevelsuctionside") for set_name in set_names],
         [("general", "structure_id"), ("structure", "crestlevel")],
-        [("general", "structure_id"), ("structure", "crestwidth")] + [(set_name, "crestlevel") for set_name in set_names],
+        [("general", "structure_id"), ("structure", "crestwidth"), ("structure", "crestlevel")],
     ]
     gdf_total = gpd.GeoDataFrame()
     for gdf, gdf_columns in zip(gdfs_list, gdfs_columns_list):
@@ -360,7 +360,7 @@ def preprocessing_ribasim_model_tables(
             set_names=set_names
         )
         return basins_outflows, None, None, None, None, None, None, None, \
-            None, None, None, None, None, None, None, None, None, None
+            None, None, None, None, None, None, None, None, None, None, None
     
     # prepare all data
     basins_outflows = get_basins_outflows_including_settings(

@@ -248,7 +248,10 @@ def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame, set_name: str):
             continue
         # get structure type data
         structure_gdf = structures_gdf.loc[structures_gdf["object_type"] == structure_type].dropna(how='all', axis=1)
-        
+
+        if structure_type == "culvert":
+            structure_gdf["crestlevel"] = structure_gdf[["leftlevel", "rightlevel"]].max(axis=1)
+
         # comments are sometimes a separate object instead of string
         if 'comments' in structure_gdf.columns:
             structure_gdf.loc[:, 'comments'] = structure_gdf.loc[:, 'comments'].astype(str)
@@ -257,16 +260,16 @@ def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame, set_name: str):
         header_0 = ["structure_id", "branch_id", "object_type", "chainage", "edge_no", "node_no"]
         headers_2 = {
             'weir': ["crestlevel"],
-            'uniweir': ["crestlevel", "yvalues", "zvalues"],
-            'universalWeir': ["crestlevel", "yvalues", "zvalues"],
-            'orifice': ["crestlevel", "gateloweredgelevel", "uselimitflowpos", "limitflowpos", "uselimitflowneg", "limitflowneg"],
+            'uniweir': ["crestlevel"],
+            'universalWeir': ["crestlevel"],
+            'orifice': ["gateloweredgelevel"],
             'pump': ["startlevelsuctionside", "stoplevelsuctionside", "startleveldeliveryside", "stopleveldeliveryside"],
         }
         if structure_type in headers_2.keys():
             header_2 = headers_2[structure_type]
         else:
             header_2 = []
-        if structure_type not in ['pump', 'culvert']:
+        if structure_type not in ['pump']:
             header_2 += ["upstream_upperlimit", "upstream_setpoint", "upstream_lowerlimit", 
                          "downstream_upperlimit", "downstream_setpoint", "downstream_lowerlimit"]
             for h in header_2:
@@ -284,13 +287,10 @@ def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame, set_name: str):
             crs=structure_gdf.crs
         )
 
-        if structure_type == "culvert":
-            structure_gdf[("structure", "crestlevel")] = structure_gdf[[("structure", "leftlevel"), ("structure", "rightlevel")]].max(axis=1)
-
         # in case of pumps: 
         # - check if multiple pumps in one pumping station
         if structure_type == "pump":
-            # check for multiple pumps if gdf is filled
+            # check for multiple pumps if gdf is not empty
             if ~structure_gdf.empty:
                 old_no_pumps = len(structure_gdf)
                 structure_gdf = check_number_of_pumps_at_pumping_station(structure_gdf, set_name)
@@ -301,7 +301,7 @@ def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame, set_name: str):
                 # display(structure_gdf.head())
             else:
                 print(f" {structure_type}s ({len(structure_gdf)}x)", end="", flush=True)
-
+        
         structures_gdf_dict[structure_type] = structure_gdf.sort_values(by=("general", "structure_id")).reset_index(drop=True)
     print(f" ")
     return structures_gdf_dict

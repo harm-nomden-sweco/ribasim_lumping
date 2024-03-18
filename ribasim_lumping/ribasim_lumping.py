@@ -193,64 +193,31 @@ class RibasimLumpingNetwork(BaseModel):
             self.network_data, self.branches_gdf, self.network_nodes_gdf, self.edges_gdf, \
                 self.nodes_gdf, self.boundaries_gdf, self.laterals_gdf, \
                 weirs_gdf, uniweirs_gdf, pumps_gdf, \
-                orifices_gdf, self.bridges_gdf, self.culverts_gdf, \
+                orifices_gdf, self.bridges_gdf, culverts_gdf, \
                 self.boundaries_data, self.laterals_data, self.volume_data = results
-            if pumps_gdf is not None:
-                if self.pumps_gdf is None:
-                    self.pumps_gdf = pumps_gdf.copy()
-                else:
-                    self.pumps_gdf = gpd.GeoDataFrame(
-                        self.pumps_gdf.drop(columns=['geometry']).merge(
-                            pumps_gdf[[set_name, 'geometry']], 
-                            how='outer', 
-                            left_index=True,
-                            right_index=True
-                        ),
-                        geometry="geometry",
-                        crs=pumps_gdf.crs
-                    )
-            if weirs_gdf is not None:
-                if self.weirs_gdf is None:
-                    self.weirs_gdf = weirs_gdf.copy()
-                else:
-                    self.weirs_gdf = gpd.GeoDataFrame(
-                        self.weirs_gdf.drop(columns=['geometry']).merge(
-                            weirs_gdf[[set_name, 'geometry']], 
-                            how='outer', 
-                            left_index=True,
-                            right_index=True
-                        ),
-                        geometry="geometry",
-                        crs=pumps_gdf.crs
-                    )
-            if uniweirs_gdf is not None:
-                if self.uniweirs_gdf is None:
-                    self.uniweirs_gdf = uniweirs_gdf.copy()
-                else:
-                    self.uniweirs_gdf = gpd.GeoDataFrame(
-                        self.uniweirs_gdf.drop(columns=['geometry']).merge(
-                            uniweirs_gdf[[set_name, 'geometry']], 
-                            how='outer', 
-                            left_index=True,
-                            right_index=True
-                        ),
-                        geometry="geometry",
-                        crs=pumps_gdf.crs
-                    )
-            if orifices_gdf is not None:
-                if self.orifices_gdf is None:
-                    self.orifices_gdf = orifices_gdf.copy()
-                else:
-                    self.orifices_gdf = gpd.GeoDataFrame(
-                        self.orifices_gdf.drop(columns=['geometry']).merge(
-                            orifices_gdf[[set_name, 'geometry']], 
-                            how='outer', 
-                            left_index=True,
-                            right_index=True
-                        ),
-                        geometry="geometry",
-                        crs=pumps_gdf.crs
-                    )
+
+            def combine_old_gdf_with_new_gdf_using_setname(old_gdf, new_gdf):
+                if new_gdf is not None:
+                    if old_gdf is None:
+                        return new_gdf.copy()
+                    else:
+                        return gpd.GeoDataFrame(
+                            old_gdf.drop(columns=['geometry', set_name], errors='ignore').merge(
+                                new_gdf[[set_name, 'geometry']], 
+                                how='outer', 
+                                left_index=True,
+                                right_index=True
+                            ),
+                            geometry="geometry",
+                            crs=pumps_gdf.crs
+                        )
+
+            self.pumps_gdf = combine_old_gdf_with_new_gdf_using_setname(self.pumps_gdf, pumps_gdf)
+            self.weirs_gdf = combine_old_gdf_with_new_gdf_using_setname(self.weirs_gdf, weirs_gdf)
+            self.uniweirs_gdf = combine_old_gdf_with_new_gdf_using_setname(self.uniweirs_gdf, uniweirs_gdf)
+            self.orifices_gdf = combine_old_gdf_with_new_gdf_using_setname(self.orifices_gdf, orifices_gdf)
+            self.culverts_gdf = combine_old_gdf_with_new_gdf_using_setname(self.culverts_gdf, culverts_gdf)
+
         return results
 
 
@@ -482,7 +449,8 @@ class RibasimLumpingNetwork(BaseModel):
         results_dir: str = 'results',
         results_subgrid: bool = False
     ):
-        if set_name not in self.basis_set_names:
+        if not dummy_model and set_name not in self.basis_set_names:
+            # print(f"set_name {set_name} not in available set_names")
             raise ValueError(f'set_name {set_name} not in available set_names')
         
         # preprocessing data to input for tables
