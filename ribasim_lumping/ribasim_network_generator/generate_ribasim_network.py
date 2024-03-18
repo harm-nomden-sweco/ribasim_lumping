@@ -999,7 +999,8 @@ def generate_ribasim_network_using_split_nodes(
     )
     check_basins_connected_to_basin_areas(
         basins=basins, 
-        basin_areas=basin_areas
+        basin_areas=basin_areas,
+        boundary_connections=boundary_connections,
     )
     return dict(
         basin_areas=basin_areas,
