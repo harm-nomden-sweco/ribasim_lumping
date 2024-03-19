@@ -240,6 +240,7 @@ def check_number_of_pumps_at_pumping_station(pumps_gdf: gpd.GeoDataFrame, set_na
 
 def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame, set_name: str):
     """Get all DHydro structures dataframes"""
+
     list_structure_types = list(structures_gdf['object_type'].unique())
     structures_gdf_dict = {}
     for structure_type in list_structure_types:
@@ -298,7 +299,6 @@ def split_dhydro_structures(structures_gdf: gpd.GeoDataFrame, set_name: str):
                     print(f" pumps ({old_no_pumps}x->{len(structure_gdf)}x)", end="", flush=True)
                 else:
                     print(f" pumps ({len(structure_gdf)}x)", end="", flush=True)
-                # display(structure_gdf.head())
             else:
                 print(f" {structure_type}s ({len(structure_gdf)}x)", end="", flush=True)
         
@@ -467,7 +467,6 @@ def get_dhydro_data_from_simulation(
         branches_gdf=branches_gdf, 
         edges_gdf=edges_gdf
     )
-    # display(structures_gdf.head())
     structures_dict = split_dhydro_structures(structures_gdf, set_name)
 
     boundaries_gdf, laterals_gdf = get_dhydro_external_forcing_locations(

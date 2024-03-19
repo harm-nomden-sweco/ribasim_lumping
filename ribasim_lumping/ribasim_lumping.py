@@ -142,7 +142,12 @@ class RibasimLumpingNetwork(BaseModel):
         print(f" - areas ({len(areas_gdf)}x)")
 
     def read_areas_laterals_timeseries(self, areas_laterals_path: Path, sep: str = ',', index_col: int = 0, dayfirst=False):
-        self.laterals_areas_data = pd.read_csv(areas_laterals_path, index_col=index_col, sep=sep, parse_dates=True, dayfirst=dayfirst)
+        self.laterals_areas_data = pd.read_csv(areas_laterals_path, 
+                                               index_col=index_col, 
+                                               sep=sep, 
+                                               parse_dates=True, 
+                                               dayfirst=dayfirst)
+        return self.laterals_areas_data
 
     def read_boundaries_timeseries_data(self, boundaries_timeseries_path: Path, skiprows=0, sep=",", index_col=0):
         boundary_csv_data = pd.read_csv(
@@ -673,6 +678,15 @@ class RibasimLumpingNetwork(BaseModel):
             shutil.copy(qgz_path_stored, qgz_path)
         print("")
         print(f"Export location: {qgz_path}")
+
+    def plot_tabulated_rating_curves(self):
+        trcs = self.ribasim_model.tabulated_rating_curve.static.df.groupby("node_id")
+        for node_id in trcs.groups.keys():
+            fig, ax = plt.subplots(1,1)
+            trcs.get_group(node_id).set_index("flow_rate")["level"].plot(marker="o")
+            trc_name = self.ribasim_model.network.node.df.loc[node_id]["name"]
+            ax.set_title(f"Tabulated Rating Curve {node_id} [{trc_name}]")
+            plt.show()
 
     def plot(self):
         fig, ax = plt.subplots(figsize=(10, 10))
