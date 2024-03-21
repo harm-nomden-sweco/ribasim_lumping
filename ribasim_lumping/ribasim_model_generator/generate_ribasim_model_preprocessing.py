@@ -40,13 +40,15 @@ def extract_bed_level_surface_storage(volume_data, nodes):
         node_surface_df[col] = np.interp(z_range, zlevels[col].values, df_data_col.values)
 
     node_storage_df = ((node_surface_df + node_surface_df.shift(1))/2.0 * increment).cumsum()
-    # node_storage_df = (node_surface_df * increment).cumsum()
+
     node_bedlevel = bedlevel
     node_bedlevel.index = ["bedlevel"]
     node_bedlevel.index.name = "condition"
 
     orig_bedlevel = bedlevel_T.copy()
     orig_bedlevel.columns = ["bedlevel"]
+
+    nodes["bedlevel"] = orig_bedlevel
     return node_surface_df, node_storage_df, node_bedlevel, orig_bedlevel
 
 

@@ -503,22 +503,16 @@ class RibasimLumpingNetwork(BaseModel):
         self.node_targetlevel = node_targetlevel
 
         basin_h_initial = None
-        if not dummy_model:
+        if not dummy_model and basin_h is not None:
             if self.method_initial_waterlevels == 1:
                 basin_h_initial = basin_h.loc[set_name].loc["targetlevel"]
                 # raise ValueError('method initial waterlevels = 1 not yet implemented')
             elif self.method_initial_waterlevels == 2:
-                ind_initial_h = 0
-                for i_set_name, i_simulations_names, i_sim_ts in zip(self.set_names, self.simulations_names, self.simulations_ts):
-                    if i_set_name != set_name:
-                        ind_initial_h += len(i_sim_ts)
-                    else:
-                        for i_ts, ts in enumerate(i_sim_ts):
-                            if i_ts == self.initial_waterlevels_timestep:
-                                break
-                            ind_initial_h += 1
-                        break
-                basin_h_initial = basin_h.loc[set_name].iloc[ind_initial_h + 2 + interpolation_lines*2]
+                basin_h_initial = basin_h.loc[self.initial_waterlevels_set_name]
+                if self.initial_waterlevels_timestep in basin_h_initial.index:
+                    basin_h_initial = basin_h_initial.loc[self.initial_waterlevels_timestep]
+                else:
+                    basin_h_initial = basin_h_initial.iloc[-1]
             elif self.method_initial_waterlevels == 3:
                 raise ValueError('method initial waterlevels = 3 not yet implemented')
             else:
