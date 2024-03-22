@@ -160,39 +160,45 @@ def generate_ribasim_manningresistances(manningresistance_static: gpd.GeoDataFra
     return ribasim.ManningResistance(static=manningresistance_static)
     
 
-def generate_fractional_flows():
+def generate_ribasim_linear_resistances(linearresistance_static: gpd.GeoDataFrame):
+    """generate ribasim linear resistances
+    static: node_id, resistance, max_flow_rate"""
+    print("linearresistances ", end="", flush=True)
+    if linearresistance_static is None or linearresistance_static.empty:
+        print("   x no linearresistance")
+        return ribasim.LinearResistance()
+    return ribasim.LinearResistance(static=linearresistance_static)
+
+
+def generate_ribasim_fractional_flows():
     return ribasim.FractionalFlow()
 
 
-def generate_linear_resistances():
-    return ribasim.LinearResistance()
-
-
-def generate_terminals():
+def generate_ribasim_terminals():
     return ribasim.Terminal()
 
 
-def generate_discrete_controls():
+def generate_ribasim_discrete_controls():
     return ribasim.DiscreteControl()
 
 
-def generate_pid_controls():
+def generate_ribasim_pid_controls():
     return ribasim.PidControl()
 
 
-def generate_users():
+def generate_ribasim_user_demands():
     return ribasim.UserDemand()
 
 
-def generate_allocations():
+def generate_ribasim_allocations():
     return ribasim.Allocation()
 
 
-def generate_solvers():
+def generate_ribasim_solvers():
     return ribasim.Solver()
 
 
-def generate_loggings():
+def generate_ribasim_loggings():
     return ribasim.Logging()
 
 
@@ -258,23 +264,25 @@ def generate_ribasim_model(
         manningresistance_static=tables['manningresistance_static'], 
     )
 
-    fractions_flows = generate_fractional_flows()
+    linear_resistances = generate_ribasim_linear_resistances(
+        linearresistance_static=tables['linearresistance_static'], 
+    )
 
-    linear_resistances = generate_linear_resistances()
+    fractions_flows = generate_ribasim_fractional_flows()
 
-    terminals = generate_terminals()
+    terminals = generate_ribasim_terminals()
 
-    discrete_controls = generate_discrete_controls()
+    discrete_controls = generate_ribasim_discrete_controls()
 
-    pid_controls = generate_pid_controls()
+    pid_controls = generate_ribasim_pid_controls()
 
-    users = generate_users()
+    users = generate_ribasim_user_demands()
 
-    allocations = generate_allocations()
+    allocations = generate_ribasim_allocations()
 
-    solvers = generate_solvers()
+    solvers = generate_ribasim_solvers()
 
-    loggings = generate_loggings()
+    loggings = generate_ribasim_loggings()
 
     starttime = tables['basin_time']["time"].iloc[0].strftime("%Y-%m-%d %H:%M")
     endtime = tables['basin_time']["time"].iloc[-1].strftime("%Y-%m-%d %H:%M")

@@ -6,6 +6,7 @@ from contextlib import closing
 from pathlib import Path
 from sqlite3 import connect
 from typing import Dict, List, Union
+import datetime
 
 import geopandas as gpd
 import matplotlib
@@ -448,11 +449,14 @@ class RibasimLumpingNetwork(BaseModel):
         self, 
         set_name: str,
         dummy_model: bool = False,
-        saveat: int = None,
         interpolation_lines: int = 5,
-        database_gpkg: str = 'database.gpkg',
+        saveat: int = 24*3600,
+        maxiters: int = 100000,
+        starttime: datetime.datetime = None,
+        endtime: datetime.datetime = None,
+        results_subgrid: bool = False,
         results_dir: str = 'results',
-        results_subgrid: bool = False
+        database_gpkg: str = 'database.gpkg',
     ):
         if not dummy_model and set_name not in self.basis_set_names:
             # print(f"set_name {set_name} not in available set_names")
@@ -562,27 +566,38 @@ class RibasimLumpingNetwork(BaseModel):
             database_gpkg=database_gpkg,
             results_dir=results_dir,
         )
-        self.ribasim_model = ribasim_model
-        
         # Export ribasim model
         if self.simulation_path is None:
             self.simulation_path = Path(self.results_dir, self.simulation_code)
         # check for timestep (saveat)
-        if saveat is not None:
-            ribasim_model.solver = ribasim.Solver(saveat=saveat)
-        if results_subgrid:
-            ribasim_model.results.subgrid = True
+        ribasim_model.solver = ribasim.Solver(saveat=saveat, maxiters=maxiters)
+        ribasim_model.results = ribasim.Results(subgrid=results_subgrid)
 
-        ribasim_model.write(Path(self.simulation_path, "ribasim.toml"))
-        with open(Path(self.simulation_path, "run_ribasim_model.bat"), 'w') as f:
-            f.write(f"{str(self.path_ribasim_executable)} ribasim.toml\n")
-            f.write(f"pause")
+        self.ribasim_model = ribasim_model
+        self.write_ribasim_model(
+            starttime=starttime, 
+            endtime=endtime
+        )
+        return ribasim_model
+
+
+    def write_ribasim_model(self, starttime=None, endtime=None):
+        if starttime is not None and endtime is not None:
+            self.ribasim_model.starttime = starttime
+            self.ribasim_model.endtime = endtime
 
         print(f"Export location: {Path(self.results_dir, self.simulation_code)}")
         # export ribasim_network
         self.export_to_geopackage(simulation_code=self.simulation_code)
-        return ribasim_model
 
+        # export ribasim_model
+        self.ribasim_model.write(Path(self.simulation_path, "ribasim.toml"))
+        
+        # write bat-file
+        with open(Path(self.simulation_path, "run_ribasim_model.bat"), 'w') as f:
+            f.write(f"{str(self.path_ribasim_executable)} ribasim.toml\n")
+            f.write(f"pause")
+        
 
     def export_to_geopackage(self, simulation_code: str, results_dir: Union[Path, str] = None):
         if results_dir is None:

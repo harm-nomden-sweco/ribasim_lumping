@@ -637,7 +637,7 @@ def generate_ribasim_types_for_all_split_nodes(
         "culvert":"ManningResistance",
         "manual": "ManningResistance",
         "orifice": "TabulatedRatingCurve",
-        "boundary_connection": "ManningResistance"
+        "boundary_connection": "LinearResistance"
     }
     if isinstance(split_node_type_conversion, Dict):
         for key, value in split_node_type_conversion.items():

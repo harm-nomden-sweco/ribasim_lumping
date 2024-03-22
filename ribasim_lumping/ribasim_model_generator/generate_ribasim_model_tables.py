@@ -232,7 +232,7 @@ def generate_tabulated_rating_curve(
 
         # check whether flow_rate is equal to zero
         if curve["flow_rate"].max() < 0.01:
-            print(f" x basin_node_id {basin_node_id}: no discharge over split_node ({split_type}): {trc.split_node_id} in D-HYDRO simulation")
+            print(f" x basin_node_id {basin_node_id}: no discharge over split_node {trc.split_node_id} ({split_type})")
             curve.loc[3:, "level"] = [i*0.05 + trc.crestlevel for i in range(0, len(curve)-3)]
             curve["flow_rate"] = curve.apply(lambda x: weir_formula(trc.crestlevel, trc.crestwidth, x["level"]), axis=1).fillna(0.0)
         
@@ -248,6 +248,16 @@ def generate_manning_resistances(manningresistance, set_name):
             manning_n=[0.04]*len(manningresistance),
             profile_width=[5.0]*len(manningresistance),
             profile_slope=[3.0]*len(manningresistance),
+        )
+    )
+
+
+def generate_linear_resistances(linearresistance, set_name):
+    return pd.DataFrame(
+        dict(
+            node_id=linearresistance["split_node_node_id"],
+            resistance=[1.0]*len(linearresistance),
+            max_flow_rate=[10000.0]*len(linearresistance),
         )
     )
 
@@ -341,9 +351,14 @@ def generate_basin_subgrid(basins_nodes_h_relation, set_name, dummy_model=False,
         )
     
     basin_subgrid = basins_nodes_h_relation[basins_nodes_h_relation["set"] == set_name]
-    basin_subgrid = basin_subgrid[["node_no", "basin_node_id", "basin_h", "node_no_h", "geometry"]]
+    no_subgrid_nodes = len(basin_subgrid["node_no"].unique())
+    no_conditions = len(basin_subgrid["condition"].unique())
+    basin_subgrid["meta_condition"] = np.repeat(list(range(no_conditions)), no_subgrid_nodes)
+
+    basin_subgrid = basin_subgrid[["node_no", "basin_node_id", "basin_h", "node_no_h", "meta_condition", "geometry"]]
     basin_subgrid["meta_x"] = basin_subgrid.geometry.x
     basin_subgrid["meta_y"] = basin_subgrid.geometry.y
+
     basin_subgrid = basin_subgrid.rename(columns={
         "node_no": "subgrid_id", 
         "basin_node_id": "node_id", 
@@ -356,7 +371,7 @@ def generate_basin_subgrid(basins_nodes_h_relation, set_name, dummy_model=False,
         basin_subgrid["basin_level_diff"] = basin_subgrid["basin_level"].diff(1)
         basin_subgrid["subgrid_level_diff"] = basin_subgrid["subgrid_level"].diff(1)
         for node_id in basin_subgrid.node_id.unique():
-            basin_subgrid.loc[(basin_subgrid['node_id'] == node_id).idxmax(), ['basin_level_diff', 'subgrid_level_diff']] = np.nan
+            basin_subgrid.loc[(basin_subgrid['node_id'] == node_id).idxmin(), ['basin_level_diff', 'subgrid_level_diff']] = np.nan
         basin_subgrid = basin_subgrid[
             ((basin_subgrid["basin_level_diff"] > 0.0001) | basin_subgrid["basin_level_diff"].isna()) & 
             ((basin_subgrid["subgrid_level_diff"] > 0.0001) | basin_subgrid["subgrid_level_diff"].isna())
@@ -574,9 +589,14 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, 
         orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df, set_name, dummy_model
     )
     
-    # create tables for MANNINGRESISTANCE
+    # create tables for MANNING RESISTANCE
     manningresistance = split_nodes[split_nodes['ribasim_type'] == 'ManningResistance']
     print(f"manningresistance: generated ({len(manningresistance)} manningresistance)")
     tables['manningresistance_static'] = generate_manning_resistances(manningresistance, set_name)
+
+    # create tables for LINEAR RESISTANCE
+    linearresistance = split_nodes[split_nodes['ribasim_type'] == 'LinearResistance']
+    print(f"linearresistance: generated ({len(linearresistance)} linearresistance)")
+    tables['linearresistance_static'] = generate_linear_resistances(linearresistance, set_name)
 
     return tables
