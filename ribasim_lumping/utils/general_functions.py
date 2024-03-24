@@ -229,3 +229,30 @@ def create_objects_gdf(
         crs=crs,
     )
     return gdf
+
+
+def extract_segment_from_linestring(line, point1, point2):
+    dist1 = line.project(point1)
+    dist2 = line.project(point2)
+    
+    start_dist, end_dist = sorted([dist1, dist2])
+
+    coords = []
+    coords.append(line.interpolate(start_dist).coords[0])
+    
+    for seg_start, seg_end in zip(line.coords[:-1], line.coords[1:]):
+        seg_line = LineString([seg_start, seg_end])
+        seg_start_dist = line.project(Point(seg_start))
+        seg_end_dist = line.project(Point(seg_end))
+
+        if seg_start_dist > end_dist:
+            break
+
+        if seg_start_dist >= start_dist and seg_end_dist <= end_dist:
+            if coords[-1] != seg_start:  # Avoid duplicate points
+                coords.append(seg_start)
+            coords.append(seg_end)
+
+    if coords[-1] != line.interpolate(end_dist).coords[0]:
+        coords.append(line.interpolate(end_dist).coords[0])
+    return LineString(coords)

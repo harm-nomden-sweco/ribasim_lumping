@@ -2,6 +2,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import random
+import datetime
 
 
 def generate_basin_static_table(
@@ -141,6 +142,72 @@ def generate_basin_time_table_laterals_drainage_per_ha(basins, basin_areas, late
     return timeseries
 
 
+def generate_basin_time_table(
+    method_laterals: int,
+    basins: gpd.GeoDataFrame,
+    areas: gpd.GeoDataFrame,
+    dummy_model: bool,
+    basin_state: pd.DataFrame,
+    basin_areas: gpd.GeoDataFrame,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+    saveat: int,
+    laterals=None,
+    laterals_data=None,
+    laterals_areas_data=None,
+    laterals_drainage_per_ha=None,
+):
+    if dummy_model:
+        basin_time = pd.concat([
+            pd.DataFrame(
+                dict(
+                    time=pd.date_range(start_time, end_time),
+                    node_id=node_id,
+                    precipitation=random.uniform(0.0, 1.0) / 365.0 / 24.0 / 3600.0,
+                    potential_evaporation=random.uniform(0, 500) / 365.0 / 24.0 / 3600.0,
+                    drainage=0.0,
+                    infiltration=0.0,
+                    urban_runoff=0.0
+                )
+            )
+            for node_id in basin_state.node_id.values
+        ]).sort_values(by=["time", "node_id"]).reset_index(drop=True)
+        print('laterals: dummy model, period 2020-01-01 - 2021-01-01')
+    elif method_laterals == 1:
+        if laterals is None or laterals_data is None:
+            raise ValueError("method_laterals = 1 requires laterals and laterals_areas_data")
+        basin_time = generate_basin_time_table_laterals(
+            basins=basins, 
+            basin_areas=basin_areas, 
+            laterals=laterals,
+            laterals_data=laterals_data,
+            saveat=saveat
+        )
+        print('laterals: based on lateral inflow according to dhydro network')
+    elif method_laterals == 2:
+        if laterals_areas_data is None:
+            raise ValueError("method_laterals = 2 requires laterals_areas_data")
+        basin_time = generate_basin_time_table_laterals_areas_data(
+            basins=basins, 
+            areas=areas, 
+            laterals_areas_data=laterals_areas_data
+        )
+        print('laterals: based on lateral inflow (timeseries) per area')
+    elif method_laterals == 3:
+        if laterals_drainage_per_ha is None:
+            raise ValueError("method_laterals = 3 requires laterals_drainage_per_ha")
+        basin_time = generate_basin_time_table_laterals_drainage_per_ha(
+            basins=basins, 
+            basin_areas=basin_areas, 
+            laterals_drainage_per_ha=laterals_drainage_per_ha
+        )
+        print('laterals: based on homogeneous lateral inflow timeseries')
+    else:
+        raise ValueError('method_laterals should be 1, 2 or 3')
+    
+    return basin_time
+
+
 def generate_tabulated_rating_curve(
     basins_outflows, tabulated_rating_curves, basin_h, \
     edge_q_df, weir_q_df, uniweir_q_df, orifice_q_df, culvert_q_df, bridge_q_df, pump_q_df, \
@@ -209,6 +276,8 @@ def generate_tabulated_rating_curve(
         curve.iloc[3]["flow_rate"] = 0.0
         curve["node_id"] = trc["split_node_node_id"]
         curve = curve.interpolate().reset_index(drop=True).round(4)
+
+        curve["meta_condition"] = curve.index
 
         # flow_rate can not be negative (?)
         curve.loc[curve["flow_rate"] < 0.0, "flow_rate"] = 0.0
@@ -426,53 +495,21 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, 
     )
 
     # create laterals table
-    if dummy_model:
-        tables['basin_time'] = pd.concat([
-            pd.DataFrame(
-                dict(
-                    time=pd.date_range(start_time, end_time),
-                    node_id=node_id,
-                    precipitation=random.uniform(0.0, 1.0) / 365.0 / 24.0 / 3600.0,
-                    potential_evaporation=random.uniform(0, 500) / 365.0 / 24.0 / 3600.0,
-                    drainage=0.0,
-                    infiltration=0.0,
-                    urban_runoff=0.0
-                )
-            )
-            for node_id in tables["basin_state"].node_id.values
-        ]).sort_values(by=["time", "node_id"]).reset_index(drop=True)
-        print('laterals: dummy model, period 2020-01-01 - 2021-01-01')
-    elif method_laterals == 1:
-        if laterals is None or laterals_data is None:
-            raise ValueError("method_laterals = 1 requires laterals and laterals_areas_data")
-        tables['basin_time'] = generate_basin_time_table_laterals(
-            basins=basins, 
-            basin_areas=basin_areas, 
-            laterals=laterals,
-            laterals_data=laterals_data,
-            saveat=saveat
-        )
-        print('laterals: based on lateral inflow according to dhydro network')
-    elif method_laterals == 2:
-        if laterals_areas_data is None:
-            raise ValueError("method_laterals = 2 requires laterals_areas_data")
-        tables['basin_time'] = generate_basin_time_table_laterals_areas_data(
-            basins=basins, 
-            areas=areas, 
-            laterals_areas_data=laterals_areas_data
-        )
-        print('laterals: based on lateral inflow (timeseries) per area')
-    elif method_laterals == 3:
-        if laterals_drainage_per_ha is None:
-            raise ValueError("method_laterals = 3 requires laterals_drainage_per_ha")
-        tables['basin_time'] = generate_basin_time_table_laterals_drainage_per_ha(
-            basins=basins, 
-            basin_areas=basin_areas, 
-            laterals_drainage_per_ha=laterals_drainage_per_ha
-        )
-        print('laterals: based on homogeneous lateral inflow timeseries')
-    else:
-        raise ValueError('method_laterals should be 1, 2 or 3')
+    tables['basin_time'] = generate_basin_time_table(
+        method_laterals=method_laterals,
+        basins=basins,
+        areas=areas,
+        dummy_model=dummy_model,
+        basin_state=tables["basin_state"],
+        basin_areas=basin_areas,
+        start_time=start_time,
+        end_time=end_time,
+        saveat=saveat,
+        laterals=laterals,
+        laterals_data=laterals_data,
+        laterals_areas_data=laterals_areas_data,
+        laterals_drainage_per_ha=laterals_drainage_per_ha,
+    )
 
     # create tables for BOUNDARIES
     flow_boundaries = boundaries[boundaries['ribasim_type']=="FlowBoundary"]

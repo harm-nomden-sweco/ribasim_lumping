@@ -18,7 +18,7 @@ from shapely.geometry import LineString, Point
 from ..utils.general_functions import (
     find_directory_in_directory, find_file_in_directory, find_nearest_edges_no,
     find_nearest_nodes, get_points_on_linestrings_based_on_distances,
-    read_ini_file_with_similar_sections, replace_string_in_file)
+    read_ini_file_with_similar_sections, replace_string_in_file, extract_segment_from_linestring)
 
 
 def get_dhydro_files(simulation_path: Path):
@@ -135,14 +135,14 @@ def get_dhydro_edges_from_network_data(network_data, nodes_gdf, branches_gdf, cr
 
     edges_df["geometry"] = ""
     edges_gdf = edges_df.merge(
-        nodes_gdf,
+        nodes_gdf[["node_no", "geometry"]],
         how="inner",
         left_on="from_node",
         right_on="node_no",
         suffixes=["", "_from"],
     )
     edges_gdf = edges_gdf.merge(
-        nodes_gdf,
+        nodes_gdf[["node_no", "geometry"]],
         how="inner",
         left_on="to_node",
         right_on="node_no",
@@ -153,6 +153,15 @@ def get_dhydro_edges_from_network_data(network_data, nodes_gdf, branches_gdf, cr
         lambda row: LineString([row["geometry_from"], row["geometry_to"]]), axis=1
     )
     edges_gdf = gpd.GeoDataFrame(edges_gdf, geometry="geometry", crs=crs)
+    
+    edges_gdf = edges_gdf.merge(branches_gdf.rename(columns={'geometry': 'geometry_branch'}), how='left', on='branch_id')
+    edges_gdf["geometry"] = edges_gdf.apply(
+        lambda x: extract_segment_from_linestring(
+            x["geometry_branch"], 
+            x["geometry_from"], 
+            x["geometry_to"]
+        ), axis=1
+    )
     edges_gdf["edge_no"] = edges_gdf.index
     edges_gdf = edges_gdf[
         ["edge_no", "branch_id", "geometry", "from_node", "to_node"]

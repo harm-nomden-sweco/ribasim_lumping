@@ -263,7 +263,8 @@ def plot_results_basin_ribasim_model(
     simulation_path: Path = None, 
     ribasim_model: ribasim.Model = None, 
     ribasim_results: RibasimModelResults = None,
-    basin_results: RibasimBasinResults = None
+    basin_results: RibasimBasinResults = None,
+    complete: bool = False
 ):
     if ribasim_results is None:
         if not simulation_path.exists():
@@ -306,15 +307,23 @@ def plot_results_basin_ribasim_model(
     basin_flow = basin_results.basin_flow.copy()
     basin = basin_results.basin.merge(basin_flow, how="outer", left_index=True, right_index=True)
 
-    fig = plt.figure(figsize=(14, 7))
+    fig = plt.figure(figsize=(12, 7))
 
     # storage
-    ax1 = fig.add_subplot(421)
+    ax1 = plt.subplot2grid((4, 5), (0, 0), colspan=3)
     ax1.set_title(f"{basin_name} ({basin_no})", fontsize=15)
     basin.level.interpolate().rename(f"Level").plot(ax=ax1, style="-o", markersize=2)
+    # if complete:
+    #     ax1.hlines(
+    #         y=basin_results.basin_profile['level'].min(), 
+    #         xmin=xmin, 
+    #         xmax=xmax, 
+    #         linestyle="-", 
+    #         color='black'
+    #     )
 
     # level
-    ax2 = fig.add_subplot(423, sharex=ax1)
+    ax2 = plt.subplot2grid((4, 5), (1, 0), colspan=3)
     basin.storage.interpolate().rename(f"Storage").plot(ax=ax2, style="-o", markersize=2)
     if control_storage is not None:
         ax1.hlines(
@@ -323,7 +332,7 @@ def plot_results_basin_ribasim_model(
         )
 
     # flow
-    ax3 = fig.add_subplot(223)#, sharex=ax1)
+    ax3 = plt.subplot2grid((4, 5), (2, 0), colspan=3, rowspan=2)
     ax3.hlines(
         y=0.0, xmin=xmin, xmax=xmax, linestyle="-", color='black'
     )
@@ -351,6 +360,70 @@ def plot_results_basin_ribasim_model(
                style="-o", 
                markersize=3))
 
+    if complete:
+        ax4 = plt.subplot2grid((4, 3), (0, 2), colspan=1, rowspan=1)
+        basin_profile = pd.concat([
+            pd.DataFrame(
+                dict(
+                    level=[basin_results.basin_profile.level.min()], 
+                    area=[0.0], 
+                    remarks=[""]
+                ), 
+                index=[0]
+            ), 
+            basin_results.basin_profile
+        ]).reset_index(drop=True)
+        basin_profile.area = basin_profile.area/10_000
+        basin_profile.set_index("level").area.rename('H-A relation').plot(ax=ax4, style='-')
+        ax4.vlines(
+            x=basin_results.basin_profile['level'].min(), 
+            ymin=0.0, 
+            ymax=basin_profile.area.max()*1.1, 
+            linestyle="-", 
+            color='black'
+        )
+        ax4.set_title(f"A-H relation", fontsize=10)
+        ax4.set_ylim([0.0, basin_profile.area.max()*1.1])
+
+        ax5 = plt.subplot2grid((4, 3), (1, 2), colspan=1, rowspan=1)
+        basin_storage = pd.concat([
+            pd.DataFrame(
+                dict(
+                    level=[basin_results.basin_profile.level.min()], 
+                    storage=[0.0],
+                    remarks=[""]
+                ), 
+                index=[0]
+            ), 
+            basin_results.basin.reset_index(drop=True)
+        ]).reset_index(drop=True)
+        basin_storage.set_index("level").storage.rename('H-V relation').plot(ax=ax5, style='o', markersize=3)
+        ax5.vlines(
+            x=basin_results.basin_profile.level.min(), 
+            ymin=0.0, 
+            ymax=basin_storage.storage.max()*1.1, 
+            linestyle="-", 
+            color='black'
+        )
+        ax5.set_title(f"V-H relation", fontsize=10)
+        ax5.set_ylim([0.0, basin_storage.storage.max()*1.1])
+
+        ax6 = plt.subplot2grid((4, 3), (2, 2), colspan=1, rowspan=2)
+        for i, outflow_edge in basin_results.outflow_edge.iterrows():
+            to_node_id = outflow_edge["to_node_id"]
+            q_h_relation = (basin_results.outflow.loc[to_node_id][["flow_rate"]]
+                            .merge(basin_results.basin[["level"]], how="inner", left_index=True, right_index=True))
+            ax6.plot(q_h_relation.level, q_h_relation.flow_rate, "o", markersize=3)
+        ax6.vlines(
+            x=basin_results.basin_profile.level.min(), 
+            ymin=0.0, 
+            ymax=basin_results.outflow.max().values*1.1, 
+            linestyle="-", 
+            color='black'
+        )
+        ax6.set_title(f"Q-H relation", fontsize=10)
+        ax6.set_ylim([0.0, basin_results.outflow.max().values*1.1])
+
     # control levels
     if control_level is not None:
         for i, clevel in control_level.iterrows():
@@ -370,18 +443,61 @@ def plot_results_basin_ribasim_model(
                 color='grey', 
                 label=f'Control level {node_name} ({controlled_node_id})'
             )
-
-    for ax in [ax1, ax2, ax3]:
-        ax.grid(color='lightgrey', linewidth=0.5)
-        ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5), fontsize=8)
+            if complete:
+                ax4.vlines(
+                    x=clevel["greater_than"], 
+                    ymin=0.0, 
+                    ymax=basin_profile.area.max()*1.1, 
+                    linestyle="--", 
+                    color='grey', 
+                    label=f'Control level {node_name} ({controlled_node_id})'
+                )
+                ax6.vlines(
+                    x=clevel["greater_than"], 
+                    ymin=0.0, 
+                    ymax=basin_results.outflow.max()*1.1, 
+                    linestyle="--", 
+                    color='grey', 
+                    label=f'Control level {node_name} ({controlled_node_id})'
+                )
 
     ax1.set_ylabel('Level [mAD]')
     ax1.set_xlabel(None)
+    ax1.set_xticklabels([])
+
     ax2.set_ylabel('Storage [m3]')
     ax2.set_xlabel(None)
     ax2.set_xticklabels([])
+
     ax2.minorticks_off()
     ax3.set_ylabel('Flow [m3/s]')
-    ax3.set_xlabel(None)
+    ax3.set_xlabel(None)    
+
+    if not complete:
+        for ax in [ax1, ax2, ax3]:
+            ax.tick_params(axis='both', which='major', labelsize=10)
+            ax.grid(color='lightgrey', linewidth=0.5)
+            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5), fontsize=8)
+        return ribasim_model, ribasim_results, basin_results, fig, [ax1, ax2, ax3]
+    else:
+        for ax in [ax1, ax2, ax3]:
+            ax.tick_params(axis='both', which='major', labelsize=10)
+            ax.grid(color='lightgrey', linewidth=0.5)
+            ax.legend(loc='best', fontsize=8)
+
+        ax4.grid(color='lightgrey', linewidth=0.5)
+        ax4.set_xlabel(None)
+        ax4.set_ylabel("Area [ha]")
+        ax4.set_xticklabels([])
+
+        ax5.grid(color='lightgrey', linewidth=0.5)
+        ax5.set_xlabel(None)
+        ax5.set_ylabel("Storage [m3]")
+        ax5.set_xticklabels([])
+
+        ax6.grid(color='lightgrey', linewidth=0.5)
+        ax6.set_xlabel('Level [mAD]')
+        ax6.set_ylabel("Flow [m3/s]")
         
-    return ribasim_model, ribasim_results, basin_results, fig, [ax1, ax2, ax3] #, ax4, ax5]
+        return ribasim_model, ribasim_results, basin_results, fig, [ax1, ax2, ax3, ax6, ax4]
+        

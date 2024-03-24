@@ -357,7 +357,6 @@ def create_boundary_connections(
     split_nodes: gpd.GeoDataFrame,
 ) -> Tuple[gpd.GeoDataFrame]:
     """create boundary-basin connections"""
-    print(f" - create Ribasim-Edges between Boundaries and Basins")
     if boundaries is None or nodes is None or basins is None:
         return None  # , None
     
@@ -388,11 +387,11 @@ def create_boundary_connections(
     ).rename(
         columns={
             "geometry": "geometry_basin", 
-            "name": "boundary_node_id",
+            "name": "boundary_name",
             "node_no": "boundary_node_no",
         }
     )
-    
+        
     # Discharge boundaries (1 connection, always inflow)
     dischargebnd_conn_in = boundaries_conn[
         boundaries_conn.quantity == "dischargebnd"
@@ -439,8 +438,8 @@ def create_boundary_connections(
             lambda x: LineString([x["midpoint"], x["geometry_basin"]]),
             axis=1,
         )
-        waterlevelbnd_conn_in1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in1["boundary_node_id"]
-        waterlevelbnd_conn_in2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in2["boundary_node_id"]
+        waterlevelbnd_conn_in1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in1["boundary_name"]
+        waterlevelbnd_conn_in2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_in2["boundary_name"]
     waterlevelbnd_conn_in1['connection'] = 'boundary_to_split_node'
     waterlevelbnd_conn_in2['connection'] = 'split_node_to_basin'
     
@@ -463,8 +462,8 @@ def create_boundary_connections(
             lambda x: LineString([x["midpoint"], x["geometry_boundary"]]),
             axis=1,
         )
-        waterlevelbnd_conn_out1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out1["boundary_node_id"]
-        waterlevelbnd_conn_out2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out2["boundary_node_id"]
+        waterlevelbnd_conn_out1["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out1["boundary_name"]
+        waterlevelbnd_conn_out2["split_node_id"] = "BoundConn_" + waterlevelbnd_conn_out2["boundary_name"]
     waterlevelbnd_conn_out1['connection'] = 'basin_to_split_node'
     waterlevelbnd_conn_out2['connection'] = 'split_node_to_boundary'
     
@@ -504,7 +503,7 @@ def create_boundary_connections(
     split_nodes['split_node'] = split_nodes.index + 1
     
     boundaries_conn = boundaries_conn[[
-        "connection", "boundary", "boundary_node_no", "boundary_node_id", 
+        "connection", "boundary", "boundary_node_no", "boundary_name", 
         "basin", "split_node_id", "geometry"
     ]].merge(
         split_nodes[['split_node_id', 'split_node']], 
@@ -514,6 +513,7 @@ def create_boundary_connections(
     
     boundaries_conn['split_node'] = boundaries_conn['split_node'].fillna(-1).astype(int)
 
+    print(f" - create Ribasim-Edges between Boundaries and Basins ({len(boundaries_conn)}x)")
     return boundaries_conn, split_nodes
 
 
