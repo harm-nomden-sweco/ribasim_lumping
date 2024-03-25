@@ -477,7 +477,7 @@ def plot_results_basin_ribasim_model(
         for ax in [ax1, ax2, ax3]:
             ax.tick_params(axis='both', which='major', labelsize=10)
             ax.grid(color='lightgrey', linewidth=0.5)
-            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5), fontsize=8)
+            ax.legend(loc='center left', bbox_to_anchor=(1.025, 0.5), fontsize=8)
         return ribasim_model, ribasim_results, basin_results, fig, [ax1, ax2, ax3]
     else:
         for ax in [ax1, ax2, ax3]:

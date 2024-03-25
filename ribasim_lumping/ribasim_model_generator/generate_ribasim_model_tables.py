@@ -5,7 +5,7 @@ import random
 import datetime
 
 
-def generate_basin_static_table(
+def generate_basin_profile_table(
     basin_h: pd.DataFrame, 
     basin_a: pd.DataFrame, 
     basins: pd.DataFrame, 
@@ -42,6 +42,7 @@ def generate_basin_static_table(
         subset=["node_id", "level"], 
         keep="first"
     )
+    basin_profile["level"] = basin_profile["level"].round(4)
     return basin_profile
 
 
@@ -275,15 +276,15 @@ def generate_tabulated_rating_curve(
         curve.iloc[2]["flow_rate"] = 0.0
         curve.iloc[3]["flow_rate"] = 0.0
         curve["node_id"] = trc["split_node_node_id"]
-        curve = curve.interpolate().reset_index(drop=True).round(4)
+        curve = curve.sort_values(by=["level", "flow_rate"])
 
+        curve = curve.interpolate().bfill().reset_index(drop=True).round(4)
         curve["meta_condition"] = curve.index
 
         # flow_rate can not be negative (?)
         curve.loc[curve["flow_rate"] < 0.0, "flow_rate"] = 0.0
         # sort on level and flow rate and keep first occurence of level
-        curve = curve.sort_values(by=["level", "flow_rate"]).drop_duplicates(subset="level", keep="first")
-
+        
         # check whether flow_rate is decreasing, remove points and count number of occurences
         no_negative_total = 0
         no_total = len(curve)
@@ -297,15 +298,17 @@ def generate_tabulated_rating_curve(
             curve = curve[~curve["flow_rate"].isna()]
         if no_negative_total > 0:
             print(f" x {trc.split_node_id} ({split_type}): {no_negative_total}/{no_total} records with decreasing discharge")
-        curve = curve.drop(columns="flow_rate_prev")
+        curve = curve.drop(columns="flow_rate_prev").reset_index(drop=True)
 
         # check whether flow_rate is equal to zero
-        if curve["flow_rate"].max() < 0.01:
+        if curve["flow_rate"].max() < 0.001:
             print(f" x basin_node_id {basin_node_id}: no discharge over split_node {trc.split_node_id} ({split_type})")
-            curve.loc[3:, "level"] = [i*0.05 + trc.crestlevel for i in range(0, len(curve)-3)]
+            curve.loc[0, "level"] = trc.crestlevel - 0.01
+            curve.loc[0, "flow_rate"] = 0.0
+            curve.loc[1:, "level"] = [i*0.05 + trc.crestlevel for i in range(0, len(curve)-1)]
             curve["flow_rate"] = curve.apply(lambda x: weir_formula(trc.crestlevel, trc.crestwidth, x["level"]), axis=1).fillna(0.0)
         
-        curves = pd.concat([curves, curve])
+        curves = pd.concat([curves, curve.drop_duplicates(subset="level", keep="first")])
     return curves.drop_duplicates().reset_index(drop=True)
 
 
@@ -378,7 +381,7 @@ def generate_boundary_static_data(boundaries, boundaries_static_data):
     return boundary_data
 
 
-def generate_basin_state(basin_h_initial, basin_profile, basin_h, set_name=None, dummy_model=False):
+def generate_basin_state_table(basin_h_initial, basin_profile, basin_h, set_name=None, dummy_model=False):
     if dummy_model:
         basin_state = basin_profile.groupby("node_id").max()[["level"]].reset_index()
         return basin_state
@@ -400,7 +403,7 @@ def generate_basin_state(basin_h_initial, basin_profile, basin_h, set_name=None,
     return basin_state
 
 
-def generate_basin_subgrid(basins_nodes_h_relation, set_name, dummy_model=False, basin_state=None):
+def generate_basin_subgrid_table(basins_nodes_h_relation, set_name, dummy_model=False, basin_state=None):
     if basins_nodes_h_relation is None:
         if not dummy_model: 
             raise ValueError("basins_nodes_h_relation not OK")
@@ -461,7 +464,7 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, 
     # create tables for BASINS
     tables = dict()
     print('basin-profile: generated')
-    tables['basin_profile'] = generate_basin_static_table(
+    tables['basin_profile'] = generate_basin_profile_table(
         basin_h=basin_h, 
         basin_a=basin_a, 
         basins=basins, 
@@ -472,7 +475,7 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, 
 
     # create tables for INITIAL STATE
     print('basin-state: generated')
-    tables["basin_state"] = generate_basin_state(
+    tables["basin_state"] = generate_basin_state_table(
         basin_h_initial=basin_h_initial, 
         basin_profile=tables["basin_profile"], 
         basin_h=basin_h, 
@@ -487,7 +490,7 @@ def generate_ribasim_model_tables(dummy_model, basin_h, basin_a, basins, areas, 
 
     # create subgrid
     print("subgrid: based on water level relation basin and nodes")
-    tables['basin_subgrid'] = generate_basin_subgrid(
+    tables['basin_subgrid'] = generate_basin_subgrid_table(
         basins_nodes_h_relation=basins_nodes_h_relation,
         set_name=set_name,
         dummy_model=dummy_model,

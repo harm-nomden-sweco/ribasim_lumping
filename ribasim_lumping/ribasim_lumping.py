@@ -570,7 +570,7 @@ class RibasimLumpingNetwork(BaseModel):
         if self.simulation_path is None:
             self.simulation_path = Path(self.results_dir, self.simulation_code)
         # check for timestep (saveat)
-        ribasim_model.solver = ribasim.Solver(saveat=saveat, maxiters=maxiters)
+        ribasim_model.solver = ribasim.Solver(saveat=saveat, maxiters=maxiters, sparse=False)
         ribasim_model.results = ribasim.Results(subgrid=results_subgrid)
 
         self.ribasim_model = ribasim_model
