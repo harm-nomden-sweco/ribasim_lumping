@@ -328,7 +328,7 @@ def generate_linear_resistances(linearresistance, set_name):
     return pd.DataFrame(
         dict(
             node_id=linearresistance["split_node_node_id"],
-            resistance=[1.0]*len(linearresistance),
+            resistance=[0.02]*len(linearresistance),
             max_flow_rate=[10000.0]*len(linearresistance),
         )
     )
